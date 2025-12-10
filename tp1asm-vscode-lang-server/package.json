@@ -1,0 +1,81 @@
+{
+	"name": "tp1-assembly-language-server",
+	"description": "Language server for TP1 architecture assembly code",
+	"author": "Thomas Peach",
+	"version": "1.0.0",
+	"keywords": [
+		"multi-root ready"
+	],
+	"engines": {
+		"vscode": "^1.100.0"
+	},
+	"activationEvents": [
+		"onLanguage:tp1asm"
+	],
+	"main": "./client/out/extension",
+	"contributes": {
+		"languages": [
+			{
+				"id": "tp1asm",
+				"aliases": [
+					"TP1 Assembly",
+					"tp1asm"
+				],
+				"extensions": [
+					".tp1a"
+				],
+				"configuration": "./syntaxes/tp1asm.config.json"
+			}
+		],
+		"grammars": [
+			{
+				"language": "tp1asm",
+				"scopeName": "source.tp1asm",
+				"path": "./syntaxes/tp1asm.tmLanguage.json"
+			}
+		],
+		"configuration": {
+			"type": "object",
+			"title": "Example configuration",
+			"properties": {
+				"tp1asmLanguageServer.assemblerExecutablePath": {
+					"scope": "resource",
+					"type": "string",
+					"description": "Path to the TP1 assembler executable."
+				},
+				"tp1asmLanguageServer.trace.server": {
+					"scope": "window",
+					"type": "string",
+					"enum": [
+						"off",
+						"messages",
+						"verbose"
+					],
+					"default": "off",
+					"description": "Traces the communication between VS Code and the language server."
+				}
+			}
+		}
+	},
+	"scripts": {
+		"vscode:prepublish": "npm run compile",
+		"compile": "tsc -b",
+		"watch": "tsc -b -w",
+		"lint": "eslint",
+		"postinstall": "cd client && npm install && cd ../server && npm install && cd ..",
+		"test": "sh ./scripts/e2e.sh"
+	},
+	"devDependencies": {
+		"@eslint/js": "^9.13.0",
+		"@stylistic/eslint-plugin": "^2.9.0",
+		"@types/mocha": "^10.0.6",
+		"@types/node": "^22",
+		"eslint": "^9.13.0",
+		"mocha": "^10.3.0",
+		"typescript": "^5.9.2",
+		"typescript-eslint": "^8.39.0"
+	},
+	"dependencies": {
+		"@vscode/vsce": "^3.7.1"
+	}
+}

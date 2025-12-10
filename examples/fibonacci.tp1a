@@ -1,0 +1,44 @@
+
+
+; init variables and write first 2 terms to screen
+D0 = -6
+[screenPointer] = D0
+D0 = 0
+[-8] = D0
+UPDATESCREEN
+[prevTerm] = D0
+D1 = 1
+[-7] = D1
+UPDATESCREEN
+[currTerm] = D1
+
+; registers are already set up so we can skip the first bit of the loop
+PC = skip
+
+loop:
+    D0 = [prevTerm]
+    D1 = [currTerm]
+skip:
+    = D0 + D1 ; nextTerm
+
+    ; update variables
+    [prevTerm] = D1
+    [currTerm] = D0
+
+    ; write currTerm to screen
+    D1 = [screenPointer]
+    [D1] = D0
+    UPDATESCREEN
+
+    ; inc screenPointer
+    = D1 + 1
+    [screenPointer] = D1
+
+    ; keep looping until screen is full
+    BNC loop
+
+; move screenPointer back to top of screen and start the loop again
+D0 = -8
+[screenPointer] = D0
+PC = loop
+

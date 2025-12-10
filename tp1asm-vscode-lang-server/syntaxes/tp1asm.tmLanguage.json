@@ -1,0 +1,44 @@
+{
+    "name": "tp1asm",
+    "scopeName": "source.tp1asm",
+    "patterns": [
+        { "include": "#expression"}
+    ],
+    "repository": {
+        "expression" : {
+            "patterns": [
+                { "include": "#comment" },
+                { "include": "#register" },
+                { "include": "#operator" },
+                { "include": "#command" },
+                { "include": "#label" },
+                { "include": "#number" }
+            ]
+        },
+        "comment": {
+            "match": ";[^\\n]*",
+            "name": "comment.line"
+        },
+        "register": {
+            "match": "(\\{D0\\}|PC|D0|D1|IN)",
+            "name": "variable.language"
+        },
+        "operator" : {
+            "match": "\\+|<|>|~|\\*|\\^|/|%|&|\\||_|=|:",
+            "name": "keyword.operator"
+        },
+        "label": {
+            "match": "[a-z][a-zA-Z]*",
+            "name": "variable.other"
+        },
+        "command": {
+            "match": "[A-Z]+",
+            "name": "keyword.control"
+        },
+        "number": {
+            "match": "[0-9]+",
+            "name": "constant.numeric"
+        }
+    }
+    
+}

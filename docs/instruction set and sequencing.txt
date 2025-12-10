@@ -1,0 +1,258 @@
+
+===== INSTRUCTION SET =====
+
+[x] - refers to loc x in RAM
+{x} - refers to loc x in ROM
+
+00 - data movement
+  00xxXyyY, where
+    xx = a is (00={PC+1}, 01=PC, 10=D0, 11=D1)
+    X = A is (0=a, 1=[a])
+    yy = b is (00={PC+1}, 01=PC, 10=D0, 11=D1)
+    Y = B is (0=b, 1=[b])
+ 
+  if 00000000 then STOP
+  else if yyY=000 then read from {D0} and write to A
+  else read from A and write to B
+  
+  if writing to PC (00---010|00010000) then don't increment PC
+  else if {PC+1} is used for A or B (0000----|00---001) then set PC to PC+2
+  else increment PC
+  
+  note: xxX=yyY is equivalent to a NO OP because reading and writing to same place.
+  note: instructions that use 2 addresses in RAM (00--1--1) are not implemented - would require an additional register.
+        equivalent to NO OP
+  note: some instructions use the value of the PC twice (000-00-1). The meaning of these instructions are clarified:
+        00000001 - [{PC+1}] = {PC+1}
+        00000011 - [PC] = {PC+1}
+        00010001 - [{PC+1}] = PC
+        00010011 - [PC] = PC
+  note: 00010010 causes cpu to get stuck
+    
+
+01 - arithmetic
+  01xyzzzz, where
+    x = A is (0=D0, 1=D1),  B is the other register
+    y = (0=store result in A, 1=discard result)
+    zzzz = (
+      0000 = DEC. A-1
+      0001 = INC. A+1
+      0010 = LSHIFT. <A
+      0011 = RSHIFT. >A
+      0100 = BW NOT. ~A			
+      0101 = 2'S COMP. -A
+      0110 = LOG2 (Sets Overflow flag and outputs 0 if A=0). _A
+      0111 = COMPARE (1 operand). A
+      1000 = ADD. A+B
+      1001 = SUB. A-B
+      1010 = MULT (does not set Overflow flag). A*B
+      1011 = BW XOR A^B
+      1100 = DIV (unsigned). A/B
+      1101 = MODULO. A%B
+      1110 = BW AND. A&B
+      1111 = BW OR. A|B.
+    )
+    
+    increment PC
+    
+10 - branch/misc
+  cpu has ZCNO flags, Zero, Carry, Negative, Overflow.
+  100xyyyy, where
+    x = A is (0={PC+1}, 1=D0)
+    yyyy=(
+      0000=BZ
+      0001=BNZ
+      0010=BC
+      0011=BNC
+      0100=BN
+      0101=BNN
+      0110=BO
+      0111=BNO
+      then some other ones maybe...
+    )
+    if branch taken set PC to A
+    else if x set inc PC
+    else set PC to PC+2
+    
+  1001---|101----- no op (for now)
+
+11 - I/O
+  11000000 - wait until enter pressed pressed
+  110001x0 - copy 8-bit input to Dx
+  
+  11100000 - update 8-byte memory-mapped output
+
+
+
+===== MICROCODE SEQUENCING =====
+  
+Below is a series of microcode sequences used to execute the instructions.
+Some are special (e.g. FETCH) but most are marked with a pattern that matches the instructions above, e.g. the sequence marked with 00001yy0 is executed for instructions 00001000, 00001010, 00001100, and 00001110. At the end of each sequence the next sequence is written.
+
+Each microcode instruction is written as a pair of lines, e.g.:
+  + bus PC+1
+  - clock ROMA and PC
+  DECODE
+The "+" line, referred to as the activate line, shows CPU controller lines that are active in the high and low phases of the clock. The "-" line, also referred to as the clock line shows those that are active in the low phase of the clock only. DECODE at the end means the next sequence is DECODE.
+ 
+Codes/Abbreviations:
+D0, D1 - registers
+Dx - D0 or D1 depending on instruction
+PC - program counter
+PC+1 - value of the program counter plus 1
+xx, yy - Represent one of the following depending on instruction: (00=ROM, 01=PC, 10=D0, 11=D1)
+INST - a controller line that allows the output line of PC+1 to instead be attached to D0 if a branch is taken
+ROM, RAM - output ROM/RAM to bus
+ALU select - controller line that determines whether to do D0 op D1 or D1 op D0.
+ALU out - output ALU to bus
+ALU - clock ALU input registers
+MODE - 4 bits determining ALU or branch mode
+INPUT - 8-bit user input
+IR - instruction register
+OUTPUT - updates the screen
+RESET ENTER - dis-activates the enter key until the user presses it again
+RAMA - RAM address register
+ROMA - ROM address register
+RAM write - clock signal to write to RAM
+STOP - stop
+WAIT - wait until wake input line is active
+
+
+FETCH
+  + bus PC+1
+  - clock ROMA and PC
+  DECODE
+DECODE
+  + bus ROM
+  - clock IR
+  lookup table is attached to IR. Gives address of next microcontroller instruction
+STOP
+  + 
+  -
+  STOP
+00xx0000 (copy {D0} into xx)
+  + bus D0
+  - clock ROMA
+  + bus ROM
+ (if xx=PC)
+  - clock xx and ROMA
+ (else)
+  - clock xx
+  FETCH
+00001000 (copy {D0} into [{PC+1}])
+  + bus PC+1
+  - clock ROMA, PC
+  00xx1000
+00xx1000 (copy {D0} into [xx])
+  + bus xx
+  - clock RAMA
+  + bus D0
+  - clock ROMA
+  + bus ROM
+  - write RAM
+  FETCH
+00000yy0
+  + bus PC+1
+  - clock ROMA and PC
+  00xx0yy0
+00xx0yy0
+  + bus xx
+ (if yy=PC)
+  - clock yy and ROMA
+ (else)
+  - clock yy
+  FETCH
+00001yy0
+  + bus PC+1
+  - clock ROMA and PC
+  00xx1yy0
+00xx1yy0
+  + bus xx
+  - clock RAMA
+  + bus RAM
+ (if yy=PC)
+  - clock yy and ROMA
+ (else)
+  - clock yy
+  FETCH
+00000011
+  + bus yy
+  - clock RAMA
+  + bus PC+1
+  - clock ROMA and PC
+  + bus ROM
+  - write RAM
+  FETCH
+00000yy1
+  + bus PC+1
+  - clock ROMA and PC
+  + bus yy
+  - clock RAMA
+  + bus ROM
+  - write RAM
+  FETCH
+00010001
+  + bus PC+1
+  - clock ROMA
+  + bus ROM
+  - clock RAMA
+  + bus xx
+  - write RAM
+  + bus PC+1
+  - clock ROMA and PC
+  FETCH
+00xx0001
+  + bus PC+1
+  - clock ROMA and PC
+  + bus ROM
+  - clock RAMA
+  + bus xx/~ROM~
+  - write RAM
+  FETCH
+00xx0yy1
+  + bus yy
+  - clock RAMA
+  + bus xx
+  - write RAM
+  FETCH
+00xx1yy1
+  NOT SUPPORTED - WOULD REQUIRE EXTRA REGISTER
+
+ALU
+01x0zzzz
+  + Set ALU select to x and MODE to zzzz
+  - Clock ALU
+  FETCH
+01x1zzzz
+  + Set ALU select bit to x and MODE to zzzz
+  - Clock ALU
+  + bus ALU out
+  - Clock Dx
+  FETCH
+
+Branch/MISC
+1000yyyy
+  + bus PC+1
+  - Clock ROMA and PC
+  if branch taken (hardware - alter next microcontroller instruction)
+  + bus ROM
+  - clock ROMA and PC
+  else (hardware)
+  FETCH
+1001yyyy
+  + bus INST (selects PC+1 or D0 as next instruction)
+  - clock ROMA and PC
+
+I/O
+11000000 - sleep until enter pressed pressed
+  + WAIT
+  - RESET ENTER
+  FETCH
+110001x0 - copy 8-bit input to Dx
+  + Bus INPUT
+  - Clock yy
+  FETCH
+11100000 - update 8-byte memory-mapped output
+  +
+  - OUTPUT
+  FETCH

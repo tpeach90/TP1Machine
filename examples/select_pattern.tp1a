@@ -1,0 +1,45 @@
+
+
+start:
+WAIT
+
+; get input
+D0 = IN
+= _D0
+
+; check input valid
+BO start
+D1 = 4
+D0 - D1
+BNN start
+
+; find address of start of selected pattern
+D1 = patterns
+= D0 + D1
+D0 = {D0}
+[patternPointer] = D0
+
+; write bytes
+D1 = -8
+loop:
+    D0 = {D0}
+    [D1] = D0 
+
+    ; increment pointers
+    D0 = [patternPointer]
+    = D0 + 1
+    [patternPointer] = D0
+    = D1 + 1
+
+    ; break when reach end of display
+    BNZ loop
+
+; jump back to start
+UPDATESCREEN
+PC = start
+
+patterns: CONST allClear offOn chessboard smileyFaces
+allClear: CONST 0 0 0 0 0 0 0 0
+offOn: CONST 0 255 0 255 0 255 0 255
+chessboard: CONST 165 165 165 165 165 165 165 165
+smileyFaces: CONST 144 159 144 159 144 159 144 159

@@ -1,0 +1,11 @@
+
+D0 = 248
+loop: WAIT
+D1 = IN
+[D0] = D1
+UPDATESCREEN
+D0 + 1
+BNC loop
+STOP
+
+

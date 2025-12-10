@@ -1,0 +1,21 @@
+
+
+
+select: D0 = -9
+wait: WAIT
+D1 = IN
+D1
+BZ wait
+loop: = D0 + 1
+= <D1
+BNC loop
+
+; d0 now contains the register we will write to
+WAIT
+D1 = IN
+[D0] = D1
+UPDATESCREEN
+PC = select
+
+
+
