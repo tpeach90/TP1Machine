@@ -2,11 +2,14 @@ use crate::common::CodeLocation;
 
 
 
+#[derive(Clone)]
 pub struct Token {
     pub loc: CodeLocation,
-    pub t: TokenDetail
+    pub t: TokenDetail,
+    pub text: String,
 }
 
+#[derive(Clone)]
 pub enum TokenDetail {
     Comment(String),
     SemiColon,
@@ -25,6 +28,7 @@ pub enum TokenDetail {
     EOF,
 }
 
+#[derive(Clone, Copy)]
 pub enum Operator {
     Plus,
     Minus,
@@ -51,6 +55,7 @@ pub enum Operator {
     SignedGreaterThanOrEqualTo,
 }
 
+#[derive(Clone, Copy)]
 pub enum Keyword {
     Const,
     Byte,

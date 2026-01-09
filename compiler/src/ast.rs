@@ -1,97 +1,112 @@
+use std::fmt::Debug;
+
 use crate::common::CodeLocation;
 
-pub enum Node<'a> {
-    ProgramNode(ProgramNode<'a>),
-    OuterStatementNode(OuterStatementNode<'a>),
-    FunctionArgumentNode(FunctionArgumentNode<'a>),
-    TypeNode(TypeNode<'a>),
-    TypeBodyNode(TypeBodyNode<'a>),
-    BlockNode(BlockNode<'a>),
-    InnerStatementNode(InnerStatementNode<'a>),
-    ConditionNode(ConditionNode<'a>),
-    ConditionDetail(ConditionDetail<'a>),
-    ExpressionNode(ExpressionNode<'a>),
-    MemoryLocationNode(MemoryLocationNode<'a>),
-    ConstantNode(ConstantNode<'a>)
+pub enum Node {
+    ProgramNode(ProgramNode),
+    OuterStatementNode(OuterStatementNode),
+    FunctionArgumentNode(FunctionArgumentNode),
+    TypeNode(TypeNode),
+    TypeBodyNode(TypeBodyNode),
+    BlockNode(BlockNode),
+    InnerStatementNode(InnerStatementNode),
+    ConditionNode(ConditionNode),
+    ConditionDetail(ConditionDetail),
+    ExpressionNode(ExpressionNode),
+    MemoryLocationNode(MemoryLocationNode),
+    ConstantNode(ConstantNode)
 }
 
-pub struct ProgramNode<'a> {
+#[derive(Debug)]
+pub struct ProgramNode {
     pub loc: CodeLocation,
-    pub statements: Vec<OuterStatementNode<'a>>,
+    pub statements: Vec<OuterStatementNode>,
 }
 
-
-pub struct OuterStatementNode<'a> {
+#[derive(Debug)]
+pub struct OuterStatementNode {
     pub loc: CodeLocation,
-    pub d: OuterStatementDetail<'a>
+    pub d: OuterStatementDetail
 }
 
-pub enum OuterStatementDetail<'a> {
-    DeclarationStatement {r#type: &'a TypeNode<'a>, identifier: String, val: &'a ConstantNode<'a>},
-    Function {r#type: &'a TypeNode<'a>, identifier: String, args: Vec<&'a FunctionArgumentNode<'a>>, body: &'a BlockNode<'a>}
+#[derive(Debug)]
+pub enum OuterStatementDetail {
+    DeclarationStatement {r#type: Box<TypeNode>, identifier: String, val: Box<ConstantNode>},
+    Function {r#type: Box<TypeNode>, identifier: String, args: Vec<Box <FunctionArgumentNode>>, body: Box <BlockNode>}
 }
 
-pub struct FunctionArgumentNode<'a> {
+#[derive(Debug)]
+pub struct FunctionArgumentNode {
     pub loc: CodeLocation,
-    pub r#type: TypeNode<'a>,
+    pub r#type: TypeNode,
     pub identifier: String,
 }
 
-pub struct TypeNode<'a> {
+#[derive(Debug)]
+pub struct TypeNode {
     pub loc: CodeLocation,
-    pub d: TypeDetail<'a>,
+    pub d: TypeDetail,
 }
 
-pub enum TypeDetail<'a> {
-    ConstType {t: &'a TypeBodyNode<'a>},
-    NonConstType {t: &'a TypeBodyNode<'a>}
+#[derive(Debug)]
+pub enum TypeDetail {
+    ConstType {t: Box <TypeBodyNode>},
+    NonConstType {t: Box <TypeBodyNode>}
 }
 
-pub struct TypeBodyNode<'a> {
+#[derive(Debug)]
+pub struct TypeBodyNode {
     pub loc: CodeLocation,
-    pub d: TypeBodyDetail<'a>,
+    pub d: TypeBodyDetail,
 }
 
-pub enum TypeBodyDetail<'a> {
+#[derive(Debug)]
+pub enum TypeBodyDetail {
     Byte {},
     Void {},
-    ROMPointer {t: &'a TypeBodyNode<'a>},
-    RAMPointer {t: &'a TypeBodyNode<'a>},
-    Array {size: u8, t: &'a TypeBodyNode<'a>},
+    ROMPointer {t: Box <TypeBodyNode>},
+    RAMPointer {t: Box <TypeBodyNode>},
+    Array {size: Box<NumberNode>, t: Box <TypeBodyNode>},
 }
 
-pub struct BlockNode<'a> {
+#[derive(Debug)]
+pub struct BlockNode {
     pub loc: CodeLocation,
-    pub statements: Vec<InnerStatementNode<'a>>
+    pub statements: Vec<InnerStatementNode>
 }
 
-pub struct InnerStatementNode<'a> {
+#[derive(Debug)]
+pub struct InnerStatementNode {
     pub loc: CodeLocation,
-    pub d: InnerStatementDetail<'a>,
+    pub d: InnerStatementDetail,
 }
 
-pub enum InnerStatementDetail<'a> {
-    ForeverLoop {body: &'a BlockNode<'a>},
-    WhileLoop {condition: &'a ConditionNode<'a>, body: &'a BlockNode<'a>},
-    DoWhileLoop {body: &'a BlockNode<'a>, condition: &'a ConditionNode<'a>},
-    IfStatement {condition: &'a ConditionNode<'a>, r#true: &'a BlockNode<'a>},
-    IfElseStatement {condition: &'a ConditionNode<'a>, r#true: &'a BlockNode<'a>, r#false: &'a BlockNode<'a>},
-    DeclarationStatement {r#type: &'a TypeNode<'a>, identifier: String, val: &'a ExpressionNode<'a>},
-    AssignmentStatement{loc: &'a MemoryLocationNode<'a>, val: &'a ExpressionNode<'a>},
-    ExpressionStatement {val: &'a ExpressionNode<'a>},
-    Block{body: &'a BlockNode<'a>}
+#[derive(Debug)]
+pub enum InnerStatementDetail {
+    ForeverLoop {body: Box <BlockNode>},
+    WhileLoop {condition: Box <ConditionNode>, body: Box <BlockNode>},
+    DoWhileLoop {body: Box <BlockNode>, condition: Box <ConditionNode>},
+    IfStatement {condition: Box <ConditionNode>, r#true: Box <BlockNode>},
+    IfElseStatement {condition: Box <ConditionNode>, r#true: Box <BlockNode>, r#false: Box <BlockNode>},
+    DeclarationStatement {r#type: Box <TypeNode>, identifier: String, val: Box <ExpressionNode>},
+    AssignmentStatement{loc: Box <MemoryLocationNode>, val: Box <ExpressionNode>},
+    ExpressionStatement {val: Box <ExpressionNode>},
+    Block{body: Box <BlockNode>}
 }
 
-pub struct ConditionNode<'a> {
+#[derive(Debug)]
+pub struct ConditionNode {
     pub loc: CodeLocation,
-    pub d: ConditionDetail<'a>,
+    pub d: ConditionDetail,
 }
 
-pub enum ConditionDetail<'a> {
+#[derive(Debug)]
+pub enum ConditionDetail {
     Branch {flag: BranchFlag},
-    Expression {val: &'a ExpressionNode<'a>}
+    Expression {val: Box <ExpressionNode>}
 }
 
+#[derive(Debug)]
 pub enum BranchFlag {
     BZ = 0,
     BNZ = 1,
@@ -107,62 +122,200 @@ pub enum BranchFlag {
 
 
 
-pub struct ExpressionNode<'a> {
+#[derive(Debug)]
+pub struct ExpressionNode {
     pub loc: CodeLocation,
-    pub d: ExpressionDetail<'a>,
+    pub d: ExpressionDetail,
 }
 
-pub enum ExpressionDetail<'a>{
-    Number {val: u8},
-    Array {val: Vec<&'a MemoryLocationNode<'a>>},
-    MemoryValue {val: &'a MemoryLocationNode<'a>},
-    MemoryAddress {val: &'a MemoryLocationNode<'a>},
-    LeftShift {val: &'a ExpressionNode<'a>},
-    RightShift {val: &'a ExpressionNode<'a>},
-    BitwiseNot {val: &'a ExpressionNode<'a>},
-    LogicalNot {val: &'a ExpressionNode<'a>},
-    Log2 {val: &'a ExpressionNode<'a>},
-    Add {left: &'a ExpressionNode<'a>, right: &'a ExpressionNode<'a>},
-    Subtract {left: &'a ExpressionNode<'a>, right: &'a ExpressionNode<'a>},
-    Multiply {left: &'a ExpressionNode<'a>, right: &'a ExpressionNode<'a>},
-    Divide {left: &'a ExpressionNode<'a>, right: &'a ExpressionNode<'a>},
-    Modulo {left: &'a ExpressionNode<'a>, right: &'a ExpressionNode<'a>},
-    BitwiseXOR {left: &'a ExpressionNode<'a>, right: &'a ExpressionNode<'a>},
-    BitwiseAND {left: &'a ExpressionNode<'a>, right: &'a ExpressionNode<'a>},
-    BitwiseOR {left: &'a ExpressionNode<'a>, right: &'a ExpressionNode<'a>},
-    EqualTo {left: &'a ExpressionNode<'a>, right: &'a ExpressionNode<'a>},
-    SignedGreaterThanOrEqualTo {left: &'a ExpressionNode<'a>, right: &'a ExpressionNode<'a>},
-    SignedLessThanOrEqualTo {left: &'a ExpressionNode<'a>, right: &'a ExpressionNode<'a>},
-    SignedLessThan {left: &'a ExpressionNode<'a>, right: &'a ExpressionNode<'a>},
-    SignedGreaterThan {left: &'a ExpressionNode<'a>, right: &'a ExpressionNode<'a>},
-    UnsignedGreaterThanOrEqualTo {left: &'a ExpressionNode<'a>, right: &'a ExpressionNode<'a>},
-    UnsignedLessThanOrEqualTo {left: &'a ExpressionNode<'a>, right: &'a ExpressionNode<'a>},
-    UnsignedLessThan {left: &'a ExpressionNode<'a>, right: &'a ExpressionNode<'a>},
-    UnsignedGreaterThan {left: &'a ExpressionNode<'a>, right: &'a ExpressionNode<'a>},
+#[derive(Debug)]
+pub enum ExpressionDetail{
+    Number {val: Box<NumberNode>},
+    Array {val: Vec<Box <ExpressionNode>>}, // array in braces.
+    MemoryValue {val: Box <MemoryLocationNode>},
+    MemoryReference {val: Box <MemoryLocationNode>}, // "&" followed by mem location
+    LeftShift {val: Box <ExpressionNode>},
+    RightShift {val: Box <ExpressionNode>},
+    BitwiseNOT {val: Box <ExpressionNode>},
+    LogicalNOT {val: Box <ExpressionNode>},
+    Log2 {val: Box <ExpressionNode>},
+    Add {left: Box <ExpressionNode>, right: Box <ExpressionNode>},
+    Subtract {left: Box <ExpressionNode>, right: Box <ExpressionNode>},
+    Multiply {left: Box <ExpressionNode>, right: Box <ExpressionNode>},
+    Divide {left: Box <ExpressionNode>, right: Box <ExpressionNode>},
+    Modulo {left: Box <ExpressionNode>, right: Box <ExpressionNode>},
+    BitwiseXOR {left: Box <ExpressionNode>, right: Box <ExpressionNode>},
+    BitwiseAND {left: Box <ExpressionNode>, right: Box <ExpressionNode>},
+    BitwiseOR {left: Box <ExpressionNode>, right: Box <ExpressionNode>},
+    EqualTo {left: Box <ExpressionNode>, right: Box <ExpressionNode>},
+    LogicalOR {left: Box <ExpressionNode>, right: Box <ExpressionNode>},
+    LogicalAND {left: Box <ExpressionNode>, right: Box <ExpressionNode>},
+    SignedGreaterThanOrEqualTo {left: Box <ExpressionNode>, right: Box <ExpressionNode>},
+    SignedLessThanOrEqualTo {left: Box <ExpressionNode>, right: Box <ExpressionNode>},
+    SignedLessThan {left: Box <ExpressionNode>, right: Box <ExpressionNode>},
+    SignedGreaterThan {left: Box <ExpressionNode>, right: Box <ExpressionNode>},
+    UnsignedGreaterThanOrEqualTo {left: Box <ExpressionNode>, right: Box <ExpressionNode>},
+    UnsignedLessThanOrEqualTo {left: Box <ExpressionNode>, right: Box <ExpressionNode>},
+    UnsignedLessThan {left: Box <ExpressionNode>, right: Box <ExpressionNode>},
+    UnsignedGreaterThan {left: Box <ExpressionNode>, right: Box <ExpressionNode>},
 }
 
 
-pub struct MemoryLocationNode<'a> {
+#[derive(Debug)]
+pub struct MemoryLocationNode {
     pub loc: CodeLocation,
-    pub d: MemoryLocationDetail<'a>,
+    pub d: MemoryLocationDetail,
 }
 
-pub enum MemoryLocationDetail<'a> {
+#[derive(Debug)]
+pub enum MemoryLocationDetail {
     Identifier {val: String},
-    ROMDereference {val: &'a MemoryLocationNode<'a>},
-    RAMDereference {val: &'a MemoryLocationNode<'a>},
-    ArrayIndex {i: &'a ExpressionNode<'a>, arr: &'a MemoryLocationNode<'a>},
-    ArraySlice {start: &'a ExpressionNode<'a>, end: &'a ExpressionNode<'a>, arr: &'a MemoryLocationNode<'a>},
-    ArraySliceNoStart {end: &'a ExpressionNode<'a>, arr: &'a MemoryLocationNode<'a>},
-    ArraySliceNoEnd {start: &'a ExpressionNode<'a>, arr: &'a MemoryLocationNode<'a>},
+    ROMDereference {val: Box <MemoryLocationNode>},
+    RAMDereference {val: Box <MemoryLocationNode>},
+    ArrayIndex {i: Box <ExpressionNode>, arr: Box <MemoryLocationNode>},
+    ArraySlice {start: Box <ExpressionNode>, end: Box <ExpressionNode>, arr: Box <MemoryLocationNode>},
+    ArraySliceNoStart {end: Box <ExpressionNode>, arr: Box <MemoryLocationNode>},
+    ArraySliceNoEnd {start: Box <ExpressionNode>, arr: Box <MemoryLocationNode>},
 }
 
-pub struct ConstantNode<'a> {
+#[derive(Debug)]
+pub struct ConstantNode {
     pub loc: CodeLocation,
-    pub d: ConstantDetail<'a>,
+    pub d: ConstantDetail,
 }
 
-pub enum ConstantDetail<'a> {
-    Number {val: u8},
-    Array {val: Vec<&'a ConstantNode<'a>>}
+#[derive(Debug)]
+pub enum ConstantDetail {
+    Number {val: Box<NumberNode>},
+    Array {val: Vec<Box <ConstantNode>>}
+}
+
+#[derive(Debug)]
+pub struct NumberNode {
+    pub loc: CodeLocation,
+    pub val: u8
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+impl std::fmt::Display for ExpressionNode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+
+        
+        let children = match &self.d {
+            ExpressionDetail::Number { val } => vec![("val".to_string(), (*val).to_string())],
+
+            ExpressionDetail::Array { val } => val.iter().enumerate().map(|(i, n)| (i.to_string(), n.to_string())).collect(),
+
+            ExpressionDetail::MemoryValue { val } |
+            ExpressionDetail::MemoryReference { val } => todo!(),
+
+            ExpressionDetail::LeftShift { val } |
+            ExpressionDetail::RightShift { val } |
+            ExpressionDetail::BitwiseNOT { val } |
+            ExpressionDetail::LogicalNOT { val } |
+            ExpressionDetail::Log2 { val } => vec![(String::from("val"), val.to_string())],
+
+            ExpressionDetail::Add { left, right } |
+            ExpressionDetail::Subtract { left, right } |
+            ExpressionDetail::Multiply { left, right } |
+            ExpressionDetail::Divide { left, right } |
+            ExpressionDetail::Modulo { left, right } |
+            ExpressionDetail::BitwiseXOR { left, right } |
+            ExpressionDetail::BitwiseAND { left, right } |
+            ExpressionDetail::BitwiseOR { left, right } |
+            ExpressionDetail::EqualTo { left, right } |
+            ExpressionDetail::LogicalOR { left, right } |
+            ExpressionDetail::LogicalAND { left, right } |
+            ExpressionDetail::SignedGreaterThanOrEqualTo { left, right } |
+            ExpressionDetail::SignedLessThanOrEqualTo { left, right } |
+            ExpressionDetail::SignedLessThan { left, right } |
+            ExpressionDetail::SignedGreaterThan { left, right } |
+            ExpressionDetail::UnsignedGreaterThanOrEqualTo { left, right } |
+            ExpressionDetail::UnsignedLessThanOrEqualTo { left, right } |
+            ExpressionDetail::UnsignedLessThan { left, right } |
+            ExpressionDetail::UnsignedGreaterThan { left, right } => vec![(String::from("left"), left.to_string()), (String::from("right"), right.to_string())],
+        };
+        
+        let kind = match &self.d {
+            ExpressionDetail::Number { val: _ } => "Number".to_string(),
+            ExpressionDetail::Array { val: _ } => "Array".to_string(),
+            ExpressionDetail::MemoryValue { val: _ } => "MemoryValue".to_string(),
+            ExpressionDetail::MemoryReference { val: _ } => "MemoryReference".to_string(),
+            ExpressionDetail::LeftShift { val: _ } => "LeftShift".to_string(),
+            ExpressionDetail::RightShift { val: _ } => "RightShift".to_string(),
+            ExpressionDetail::BitwiseNOT { val: _ } => "BitwiseNOT".to_string(),
+            ExpressionDetail::LogicalNOT { val: _ } => "LogicalNOT".to_string(),
+            ExpressionDetail::Log2 { val: _ } => "Log2".to_string(),
+            ExpressionDetail::Add { left: _, right: _ } => "Add".to_string(),
+            ExpressionDetail::Subtract { left: _, right: _ } => "Subtract".to_string(),
+            ExpressionDetail::Multiply { left: _, right: _} => "Multiply".to_string(),
+            ExpressionDetail::Divide {left: _, right: _ } => "Divide".to_string(),
+            ExpressionDetail::Modulo { left: _, right: _ } => "Modulo".to_string(),
+            ExpressionDetail::BitwiseXOR { left: _, right: _ } => "BitwiseXOR".to_string(),
+            ExpressionDetail::BitwiseAND { left: _, right: _ } => "BitwiseAND".to_string(),
+            ExpressionDetail::BitwiseOR { left: _, right: _ } => "BitwiseOR".to_string(),
+            ExpressionDetail::EqualTo { left: _, right: _ } => "EqualTo".to_string(),
+            ExpressionDetail::LogicalOR { left: _, right: _ } => "LogicalOR".to_string(),
+            ExpressionDetail::LogicalAND { left: _, right: _ } => "LogicalAND".to_string(),
+            ExpressionDetail::SignedGreaterThanOrEqualTo { left: _, right: _ } => "SignedGreaterThanOrEqualTo".to_string(),
+            ExpressionDetail::SignedLessThanOrEqualTo { left: _, right: _ } => "SignedLessThanOrEqualTo".to_string(),
+            ExpressionDetail::SignedLessThan { left: _, right: _ } => "SignedLessThan".to_string(),
+            ExpressionDetail::SignedGreaterThan { left: _, right: _ } => "SignedGreaterThan".to_string(),
+            ExpressionDetail::UnsignedGreaterThanOrEqualTo { left: _, right: _ } => "UnsignedGreaterThanOrEqualTo".to_string(),
+            ExpressionDetail::UnsignedLessThanOrEqualTo { left: _, right: _ } => "UnsignedLessThanOrEqualTo".to_string(),
+            ExpressionDetail::UnsignedLessThan { left: _, right: _ } => "UnsignedLessThan".to_string(),
+            ExpressionDetail::UnsignedGreaterThan { left: _, right: _ } => "UnsignedGreaterThan".to_string(),
+        };
+
+        let mut out = kind ;
+        for (i, (role, tree_str)) in children.iter().enumerate() {
+            out += "\n";
+            let lines: Vec<String> = (role.clone().to_string() + ": " + &tree_str).split("\n").map(|s| s.to_string()).collect();
+            for (j, line) in lines.iter().enumerate() {
+                if i != children.len() - 1  {
+                    if j == 0 {
+                        out += "├╴";
+                    } else {
+                        out += "│ ";
+                    }
+                } else {
+                    if j == 0 {
+                        out += "└╴";
+                    } else {
+                        out += "  ";
+                    }
+                }
+                out += line;
+                if  j != lines.len() - 1 {
+                    out += "\n";
+                }
+            }
+
+        };
+
+        write!(f, "{}", out)
+
+    }
+}
+
+impl std::fmt::Display for NumberNode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.val)
+    }
 }

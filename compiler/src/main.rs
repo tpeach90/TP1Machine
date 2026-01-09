@@ -1,33 +1,46 @@
 
 mod tokens;
-use tokens::{Token, TokenDetail::*};
+use tokens::{Token, TokenDetail::*, Operator::*};
 
 use common::CodeLocation;
+
+use crate::{parser::Parser, tokens::TokenDetail};
 
 mod ast;
 mod common;
 mod parser;
 
-fn main() {
-    println!("Hello, world!");
-    let token = Token {loc: CodeLocation::default(), t: Comma};
 
-    match token.t {
-        Comma => {
-    
-        }
-        Comment(_) => todo!(),
-        SemiColon => todo!(),
-        Keyword(_) => todo!(),
-        Identifier(_) => todo!(),
-        Equals => todo!(),
-        LeftBracket => todo!(),
-        RightBracket => todo!(),
-        LeftParenthesis => todo!(),
-        RightParenthesis => todo!(),
-        LeftBrace => todo!(),
-        RightBrace => todo!(),
-        Operator(_) => todo!(),
-        Integer(_) => todo!(),
+fn main() {
+
+    let tokens: Vec<Token> = vec![
+        Token{loc:CodeLocation::default(), text:String::default(), t: Integer(String::from("5")) },
+        Token{loc:CodeLocation::default(), text:String::default(), t: Operator(Plus) },
+        Token{loc:CodeLocation::default(), text:String::default(), t: Integer(String::from("6")) },
+        Token{loc:CodeLocation::default(), text:String::default(), t: Operator(DoubleAmpersand) },
+        Token{loc:CodeLocation::default(), text:String::default(), t: Integer(String::from("7")) },
+        Token{loc:CodeLocation::default(), text:String::default(), t: Operator(Minus) },
+        Token{loc:CodeLocation::default(), text:String::default(), t: Operator(Minus) },
+        Token{loc:CodeLocation::default(), text:String::default(), t: Integer(String::from("8")) },
+        Token{loc:CodeLocation::default(), text:String::default(), t: Operator(Plus) },
+        Token{loc:CodeLocation::default(), text:String::default(), t: Integer(String::from("54")) },
+        Token{loc:CodeLocation::default(), text:String::default(), t: Operator(Asterix) },
+        Token{loc:CodeLocation::default(), text:String::default(), t: LeftParenthesis },
+        Token{loc:CodeLocation::default(), text:String::default(), t: Integer(String::from("2")) },
+        Token{loc:CodeLocation::default(), text:String::default(), t: Operator(Ampersand) },
+        Token{loc:CodeLocation::default(), text:String::default(), t: Integer(String::from("6")) },
+        Token{loc:CodeLocation::default(), text:String::default(), t: RightParenthesis },
+        Token{loc:CodeLocation::default(), text:String::default(), t: EOF }
+    ];
+
+    let mut parser = Parser::new(&tokens);
+
+    match parser.parse_expression() {
+        Err(e) => println!("{:?}, {}", e.loc, e.message),
+        Ok(node) => println!("{}", node)
     }
+
+
+
+
 }
