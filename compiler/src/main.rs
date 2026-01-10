@@ -9,6 +9,7 @@ use crate::{parser::Parser, tokens::TokenDetail};
 mod ast;
 mod common;
 mod parser;
+mod lexer;
 
 
 fn main() {
@@ -25,6 +26,7 @@ fn main() {
         Token{loc:CodeLocation::default(), text:String::default(), t: Operator(Plus) },
         Token{loc:CodeLocation::default(), text:String::default(), t: Integer(String::from("54")) },
         Token{loc:CodeLocation::default(), text:String::default(), t: Operator(Asterix) },
+        Token{loc:CodeLocation::default(), text:String::default(), t: Operator(Tilde) },
         Token{loc:CodeLocation::default(), text:String::default(), t: LeftParenthesis },
         Token{loc:CodeLocation::default(), text:String::default(), t: Integer(String::from("2")) },
         Token{loc:CodeLocation::default(), text:String::default(), t: Operator(Ampersand) },

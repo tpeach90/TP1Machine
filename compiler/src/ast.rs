@@ -1,11 +1,10 @@
-use std::fmt::Debug;
+use std::{fmt::Debug};
 
 use crate::common::CodeLocation;
 
 pub enum Node {
     ProgramNode(ProgramNode),
     OuterStatementNode(OuterStatementNode),
-    FunctionArgumentNode(FunctionArgumentNode),
     TypeNode(TypeNode),
     TypeBodyNode(TypeBodyNode),
     BlockNode(BlockNode),
@@ -20,7 +19,8 @@ pub enum Node {
 #[derive(Debug)]
 pub struct ProgramNode {
     pub loc: CodeLocation,
-    pub statements: Vec<OuterStatementNode>,
+    pub outer_statements: Vec<Box<OuterStatementNode>>,
+    pub main: Box<BlockNode>,
 }
 
 #[derive(Debug)]
@@ -32,15 +32,8 @@ pub struct OuterStatementNode {
 #[derive(Debug)]
 pub enum OuterStatementDetail {
     DeclarationStatement {r#type: Box<TypeNode>, identifier: String, val: Box<ConstantNode>},
-    Function {r#type: Box<TypeNode>, identifier: String, args: Vec<Box <FunctionArgumentNode>>, body: Box <BlockNode>}
 }
 
-#[derive(Debug)]
-pub struct FunctionArgumentNode {
-    pub loc: CodeLocation,
-    pub r#type: TypeNode,
-    pub identifier: String,
-}
 
 #[derive(Debug)]
 pub struct TypeNode {
@@ -72,7 +65,7 @@ pub enum TypeBodyDetail {
 #[derive(Debug)]
 pub struct BlockNode {
     pub loc: CodeLocation,
-    pub statements: Vec<InnerStatementNode>
+    pub statements: Vec<Box<InnerStatementNode>>
 }
 
 #[derive(Debug)]
@@ -89,7 +82,7 @@ pub enum InnerStatementDetail {
     IfStatement {condition: Box <ConditionNode>, r#true: Box <BlockNode>},
     IfElseStatement {condition: Box <ConditionNode>, r#true: Box <BlockNode>, r#false: Box <BlockNode>},
     DeclarationStatement {r#type: Box <TypeNode>, identifier: String, val: Box <ExpressionNode>},
-    AssignmentStatement{loc: Box <MemoryLocationNode>, val: Box <ExpressionNode>},
+    AssignmentStatement{lvalue: Box <MemoryLocationNode>, rvalue: Box <ExpressionNode>},
     ExpressionStatement {val: Box <ExpressionNode>},
     Block{body: Box <BlockNode>}
 }
@@ -132,6 +125,7 @@ pub struct ExpressionNode {
 pub enum ExpressionDetail{
     Number {val: Box<NumberNode>},
     Array {val: Vec<Box <ExpressionNode>>}, // array in braces.
+    FunctionCall {ident: String, args: Vec<Box<ExpressionNode>>},
     MemoryValue {val: Box <MemoryLocationNode>},
     MemoryReference {val: Box <MemoryLocationNode>}, // "&" followed by mem location
     LeftShift {val: Box <ExpressionNode>},
@@ -221,6 +215,7 @@ impl std::fmt::Display for ExpressionNode {
             ExpressionDetail::Number { val } => vec![("val".to_string(), (*val).to_string())],
 
             ExpressionDetail::Array { val } => val.iter().enumerate().map(|(i, n)| (i.to_string(), n.to_string())).collect(),
+            ExpressionDetail::FunctionCall { ident, args } => args.iter().enumerate().map(|(i, n)| (i.to_string(), n.to_string())).collect(),
 
             ExpressionDetail::MemoryValue { val } |
             ExpressionDetail::MemoryReference { val } => todo!(),
@@ -255,6 +250,7 @@ impl std::fmt::Display for ExpressionNode {
         let kind = match &self.d {
             ExpressionDetail::Number { val: _ } => "Number".to_string(),
             ExpressionDetail::Array { val: _ } => "Array".to_string(),
+            ExpressionDetail::FunctionCall { ident, args: _ } => format!("FunctionCall ({})", ident),
             ExpressionDetail::MemoryValue { val: _ } => "MemoryValue".to_string(),
             ExpressionDetail::MemoryReference { val: _ } => "MemoryReference".to_string(),
             ExpressionDetail::LeftShift { val: _ } => "LeftShift".to_string(),

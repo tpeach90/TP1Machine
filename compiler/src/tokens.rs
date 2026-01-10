@@ -13,6 +13,7 @@ pub struct Token {
 pub enum TokenDetail {
     Comment(String),
     SemiColon,
+    Colon,
     Keyword(Keyword),
     Identifier(String),
     Equals,
@@ -57,7 +58,9 @@ pub enum Operator {
 
 #[derive(Clone, Copy)]
 pub enum Keyword {
+    Main,
     Const,
+    Let,
     Byte,
     Void,
     Function,

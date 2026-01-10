@@ -1,6 +1,7 @@
-use std::usize;
+use core::num;
+use std::{usize};
 
-use crate::{ast::{ExpressionDetail, ExpressionNode, NumberNode}, common::CodeLocation, tokens::{Operator, Token, TokenDetail}};
+use crate::{ast::{BlockNode, BranchFlag, ConditionDetail, ConditionNode, ConstantDetail, ConstantNode, ExpressionDetail, ExpressionNode, InnerStatementDetail, InnerStatementNode, MemoryLocationDetail, MemoryLocationNode, NumberNode, OuterStatementDetail, OuterStatementNode, ProgramNode, TypeBodyDetail, TypeBodyNode, TypeDetail, TypeNode}, common::CodeLocation, tokens::{Keyword, Operator, Token, TokenDetail}};
 
 pub struct Parser<'b> {
     tokens: &'b Vec<Token>,
@@ -17,6 +18,407 @@ impl Parser <'_> {
 
     pub fn new<'b>(tokens: &'b Vec<Token>) -> Parser<'b> {
         Parser { tokens, offset: 0 }
+    }
+
+    fn advance_token(&mut self) -> Token {
+        self.offset += 1;
+        self.tokens[self.offset].clone()
+    }
+
+    fn current_token(&self) -> Token {
+        self.tokens[self.offset].clone()
+    }
+
+    pub fn parse_program(&mut self) -> Result<Box<ProgramNode>, ParseError> {
+
+        let lookahead = self.current_token();
+        let mut outer_statements = vec![];
+        while !matches!(self.current_token().t, TokenDetail::Keyword(Keyword::Main)) {
+            outer_statements.push(self.parse_outer_statement()?);
+            let lookahead2 = self.current_token();
+            if !matches!(lookahead2.t, TokenDetail::SemiColon) {
+                return Err(ParseError { loc: lookahead.loc, message: "Expected a semi colon".to_string() })
+            }
+            self.advance_token();
+        }
+        self.advance_token();
+        let main = self.parse_block()?;
+        Ok(Box::new(ProgramNode { loc: CodeLocation { startIndex: lookahead.loc.startIndex, endIndex: main.loc.endIndex }, outer_statements, main }))
+
+    }
+
+    fn parse_outer_statement(&mut self) -> Result<Box<OuterStatementNode>, ParseError> {
+        let lookahead = self.current_token();
+        match lookahead.t {
+            TokenDetail::Keyword(Keyword::Let) => self.parse_outer_declaration(),
+            _ => Err(ParseError { loc: lookahead.loc, message: "Expected a declaration or main block".to_string() })
+        }
+    }
+
+    fn parse_outer_declaration(&mut self) -> Result<Box<OuterStatementNode>, ParseError> {
+        let expect_let_keyword = self.current_token();
+        if !matches!(expect_let_keyword.t, TokenDetail::Keyword(Keyword::Let)) {
+            return Err(ParseError { loc: expect_let_keyword.loc, message: "Expected a declaration".to_string() })
+        }
+        self.advance_token();
+        let type_node = self.parse_type()?;
+
+        let expect_identifier = self.current_token();
+        let identifier = match expect_identifier.t {
+            TokenDetail::Identifier(_identifier) => Ok(_identifier),
+            _ => Err(ParseError{loc: expect_identifier.loc, message: "Expected an identifier".to_string()})
+        }?;
+        
+        let expect_equals = self.advance_token();
+        if !matches!(expect_equals.t, TokenDetail::Equals) {
+            return Err(ParseError { loc: expect_equals.loc, message: "Expected an initial value".to_string() })
+        }
+        self.advance_token();
+        let value = self.parse_constant()?;
+        Ok(Box::new(OuterStatementNode { loc: CodeLocation { startIndex: expect_let_keyword.loc.startIndex, endIndex: value.loc.endIndex }, d: OuterStatementDetail::DeclarationStatement { r#type: type_node, identifier, val: value }}))
+    }
+
+    fn parse_block(&mut self) -> Result<Box<BlockNode>, ParseError> {
+        let lookahead = self.current_token();
+        if !matches!(lookahead.t, TokenDetail::LeftBrace) {
+            return Err(ParseError { loc: lookahead.loc, message: "Expected a block".to_string() });
+        }
+        self.advance_token();
+
+        let mut statements: Vec<Box<InnerStatementNode>> = vec![];
+        while !matches!(self.current_token().t, TokenDetail::RightBrace) {
+
+            if matches!(self.current_token().t, TokenDetail::EOF) {
+                return Err(ParseError { loc: lookahead.loc, message: "Missing a closing brace".to_string() })
+            }
+
+            let node = self.parse_inner_statement()?;
+            statements.push(node);
+            if matches!(self.current_token().t, TokenDetail::SemiColon) {
+                self.advance_token();
+            } else {
+                return Err(ParseError { loc: self.current_token().loc, message: "Expected a semi colon".to_string() });
+            }
+        }
+
+        let loc = CodeLocation {startIndex: lookahead.loc.startIndex, endIndex: self.current_token().loc.endIndex};
+        self.advance_token();
+        Ok(Box::new(BlockNode { loc, statements }))
+    }
+
+    fn parse_inner_statement(&mut self) -> Result<Box<InnerStatementNode>, ParseError> {
+        let lookahead = self.current_token();
+        match lookahead.t {
+            TokenDetail::Keyword(Keyword::Forever) => self.parse_forever_loop(),
+            TokenDetail::Keyword(Keyword::While) => self.parse_while_loop(),
+            TokenDetail::Keyword(Keyword::Do) => self.parse_do_while_loop(),
+            TokenDetail::Keyword(Keyword::If) => self.parse_if_statement(),
+            TokenDetail::Keyword(Keyword::Let) => self.parse_inner_declaration_statement(),
+
+            TokenDetail::Identifier(_) | 
+            TokenDetail::Operator(Operator::Arobase) | 
+            TokenDetail::Operator(Operator::Asterix) |
+            TokenDetail::LeftBracket => {
+                // could be expression or assignment
+                // look to see if there's an Equals before the next SemiColon or EOF
+                for i in self.offset..self.tokens.len() {
+                    if matches!(self.tokens[i].t, TokenDetail::SemiColon) {
+                        return self.parse_expression_statement();
+                    } else if matches!(self.tokens[i].t, TokenDetail::Equals) {
+                        return self.parse_assignment_statement();
+                    }
+                }
+                return self.parse_expression_statement();
+            }
+
+            TokenDetail::LeftParenthesis |
+            TokenDetail::Operator(Operator::Ampersand) |
+            TokenDetail::Operator(Operator::Minus) |
+            TokenDetail::Integer(_) |
+            TokenDetail::Operator(Operator::Tilde) | 
+            TokenDetail::Operator(Operator::Exclaimation) | 
+            TokenDetail::Operator(Operator::Underscore) => {
+                self.parse_expression_statement()
+            }
+
+            TokenDetail::LeftBrace => {
+                let node = self.parse_block()?;
+                Ok (Box::new(InnerStatementNode { loc: node.loc, d: InnerStatementDetail::Block { body: node } }))
+            },
+
+            _ => Err(ParseError { loc: lookahead.loc, message: "Expected a statement".to_string() })
+
+        }
+    }
+
+    fn parse_forever_loop(&mut self) -> Result<Box<InnerStatementNode>, ParseError> {
+        let lookahead = self.current_token();
+        if !matches!(lookahead.t, TokenDetail::Keyword(Keyword::Forever)) {
+            return Err(ParseError { loc: self.current_token().loc, message: "Expected a forever loop".to_string()});
+        }
+        self.advance_token();
+        
+        let block = self.parse_block()?;
+        return Ok(Box::new(InnerStatementNode { loc: CodeLocation { startIndex: lookahead.loc.startIndex, endIndex: block.loc.endIndex }, d: InnerStatementDetail::ForeverLoop { body: block } }));
+        
+    }
+    fn parse_while_loop(&mut self) -> Result<Box<InnerStatementNode>, ParseError> {
+        let lookahead = self.current_token();
+        if !matches!(lookahead.t, TokenDetail::Keyword(Keyword::While)) {
+            return Err(ParseError { loc: self.current_token().loc, message: "Expected a while loop".to_string()});
+        }
+        self.advance_token();
+
+        let condition: Box<ConditionNode> = self.parse_condition()?;
+        let body = self.parse_block()?;
+
+        return Ok(Box::new(InnerStatementNode { loc: CodeLocation { startIndex: lookahead.loc.startIndex, endIndex: body.loc.endIndex }, d: InnerStatementDetail::WhileLoop { condition, body } }));
+
+    }
+    fn parse_do_while_loop(&mut self) -> Result<Box<InnerStatementNode>, ParseError> {
+        let expect_do_keyword = self.current_token();
+        if !matches!(expect_do_keyword.t, TokenDetail::Keyword(Keyword::Do)) {
+            return Err(ParseError { loc: expect_do_keyword.loc, message: "Expected a do-while loop".to_string()});
+        }
+        self.advance_token();
+
+        let body = self.parse_block()?;
+        let expect_while_keyword = self.current_token();
+        if !matches!(expect_while_keyword.t, TokenDetail::Keyword(Keyword::While)) {
+            return Err(ParseError { loc: expect_while_keyword.loc, message: "Expected a while condition".to_string()});
+        }
+        self.advance_token();
+        let condition = self.parse_condition()?;
+
+        return Ok(Box::new(InnerStatementNode { loc: CodeLocation { startIndex: expect_do_keyword.loc.startIndex, endIndex: condition.loc.endIndex }, d: InnerStatementDetail::DoWhileLoop  { body, condition } }));
+
+    }
+    fn parse_if_statement(&mut self) -> Result<Box<InnerStatementNode>, ParseError> {
+        let expect_if_keyword = self.current_token();
+        if !matches!(expect_if_keyword.t, TokenDetail::Keyword(Keyword::If)) {
+            return Err(ParseError { loc: expect_if_keyword.loc, message: "Expected an if statement".to_string()});
+        }
+        self.advance_token();
+
+        let condition = self.parse_condition()?;
+        let body_if_true = self.parse_block()?;
+
+        let maybe_else_keyword = self.current_token();
+        if matches!(maybe_else_keyword.t, TokenDetail::Keyword(Keyword::Else)) {
+            self.advance_token();
+            // could be an "else" or an "else if" here
+            let lookahead = self.current_token();
+            if matches!(lookahead.t, TokenDetail::Keyword(Keyword::If)) {
+                // "else if"
+                // treat this as if the second if statement were a single statement inside the else block.
+                let next_if_statement = self.parse_if_statement()?;
+                let body_if_false = Box::new(BlockNode{loc: next_if_statement.loc, statements:vec![next_if_statement]});
+                Ok(Box::new(InnerStatementNode { loc: CodeLocation { startIndex: expect_if_keyword.loc.startIndex, endIndex: body_if_false.loc.endIndex }, d: InnerStatementDetail::IfElseStatement { condition, r#true: body_if_true, r#false: body_if_false } }))
+               
+            } else if matches!(lookahead.t, TokenDetail::LeftBrace) {
+                // "else"
+                let body_if_false = self.parse_block()?;
+                Ok(Box::new(InnerStatementNode { loc: CodeLocation { startIndex: expect_if_keyword.loc.startIndex, endIndex: body_if_false.loc.endIndex }, d: InnerStatementDetail::IfElseStatement { condition, r#true: body_if_true, r#false: body_if_false } }))
+            } else {
+                Err(ParseError { loc: lookahead.loc, message: "Expected a block or another if statement".to_string() })
+            }
+        } else {
+            // no else
+            Ok(Box::new(InnerStatementNode { loc: CodeLocation { startIndex: expect_if_keyword.loc.startIndex, endIndex: body_if_true.loc.endIndex }, d: InnerStatementDetail::IfStatement { condition: condition, r#true: body_if_true } }))
+        }
+
+    }
+    fn parse_inner_declaration_statement(&mut self) -> Result<Box<InnerStatementNode>, ParseError> {
+        let expect_let_keyword = self.current_token();
+        if !matches!(expect_let_keyword.t, TokenDetail::Keyword(Keyword::Let)) {
+            return Err(ParseError { loc: expect_let_keyword.loc, message: "Expected a declaration".to_string() })
+        }
+        self.advance_token();
+        let type_node = self.parse_type()?;
+
+        let expect_identifier = self.current_token();
+        let identifier = match expect_identifier.t {
+            TokenDetail::Identifier(_identifier) => Ok(_identifier),
+            _ => Err(ParseError{loc: expect_identifier.loc, message: "Expected an identifier".to_string()})
+        }?;
+        
+        let expect_equals = self.advance_token();
+        if !matches!(expect_equals.t, TokenDetail::Equals) {
+            return Err(ParseError { loc: expect_equals.loc, message: "Expected an initial value".to_string() })
+        }
+        self.advance_token();
+        let initial_value = self.parse_expression()?;
+        Ok(Box::new(InnerStatementNode { loc: CodeLocation { startIndex: expect_let_keyword.loc.startIndex, endIndex: initial_value.loc.endIndex }, d: InnerStatementDetail::DeclarationStatement { r#type: type_node, identifier, val: initial_value } }))
+
+    }
+    fn parse_assignment_statement(&mut self) -> Result<Box<InnerStatementNode>, ParseError> {
+        let lvalue = self.parse_memory_location()?;
+        let expect_equals = self.current_token();
+        if !matches!(expect_equals.t, TokenDetail::Equals) {
+            return Err(ParseError { loc: expect_equals.loc, message: "Expected an equals".to_string() })
+        }
+        self.advance_token();
+        let rvalue = self.parse_expression()?;
+        Ok(Box::new(InnerStatementNode { loc: CodeLocation { startIndex: lvalue.loc.startIndex, endIndex: rvalue.loc.endIndex }, d: InnerStatementDetail::AssignmentStatement { lvalue, rvalue } }))
+
+    }
+
+    fn parse_expression_statement(&mut self) -> Result<Box<InnerStatementNode>, ParseError> {
+        let node = self.parse_expression()?;
+        Ok(Box::new(InnerStatementNode { loc: node.loc, d: InnerStatementDetail::ExpressionStatement { val: node } }))
+    }
+
+    fn parse_condition(& mut self) -> Result<Box<ConditionNode>, ParseError> {
+        let lookahead = self.current_token();
+        if matches!(lookahead.t, TokenDetail::Keyword(Keyword::Flag)) {
+            let flag_token = self.advance_token();
+            let flag = match flag_token.t {
+                TokenDetail::Identifier(ident) => match ident.as_str() {
+                    "BZ" => Ok(BranchFlag::BZ),
+                    "BNZ" => Ok(BranchFlag::BNZ),
+                    "BC" => Ok(BranchFlag::BC),
+                    "BNC" => Ok(BranchFlag::BNC),
+                    "BN" => Ok(BranchFlag::BN),
+                    "BNN" => Ok(BranchFlag::BNN),
+                    "BO" => Ok(BranchFlag::BO),
+                    "BNO" => Ok(BranchFlag::BNO),
+                    "BGTE" => Ok(BranchFlag::BGTE),
+                    "BNGTE" => Ok(BranchFlag::BNGTE),
+                    _ => Err(ParseError{loc: flag_token.loc, message: "Expected a flag".to_string()})
+                }
+            _ => Err(ParseError{loc: flag_token.loc, message: "Expected a flag".to_string()})
+            }?;
+            self.advance_token();
+            Ok(Box::new(ConditionNode { loc: CodeLocation { startIndex: lookahead.loc.startIndex, endIndex: flag_token.loc.endIndex }, d: ConditionDetail::Branch { flag } }))
+
+        } else if matches!(lookahead.t, TokenDetail::LeftParenthesis) {
+            self.advance_token();
+            let expr = self.parse_expression()?;
+            let expect_right_parenthesis = self.current_token();
+            if !matches!(expect_right_parenthesis.t, TokenDetail::RightParenthesis) {
+                Err(ParseError { loc: lookahead.loc, message: "Condition missing closing parenthesis".to_string() })
+            } else {
+                self.advance_token();
+                Ok(Box::new(ConditionNode { loc: CodeLocation { startIndex: lookahead.loc.startIndex, endIndex: expect_right_parenthesis.loc.endIndex }, d: ConditionDetail::Expression { val: expr } }))
+            }
+        } else {
+            Err(ParseError { loc: lookahead.loc, message: "Expected a condition. Expressions should be surrounded with parentheses.".to_string() })
+        }
+    }
+
+    fn parse_memory_location(&mut self) -> Result<Box<MemoryLocationNode>, ParseError> {
+        let lookahead = self.current_token();
+        match lookahead.t {
+            TokenDetail::Identifier(ident) => {
+                Ok(Box::new(MemoryLocationNode { loc: lookahead.loc, d: MemoryLocationDetail::Identifier { val: ident } }))
+            },
+            TokenDetail::Operator(Operator::Arobase) => {
+                self.advance_token();
+                let location_to_deref = self.parse_memory_location()?;
+                Ok(Box::new(MemoryLocationNode { loc: CodeLocation { startIndex: lookahead.loc.startIndex, endIndex: location_to_deref.loc.endIndex }, d: MemoryLocationDetail::ROMDereference { val: location_to_deref } }))
+            },
+            TokenDetail::Operator(Operator::Asterix) => {
+                self.advance_token();
+                let location_to_deref = self.parse_memory_location()?;
+                Ok(Box::new(MemoryLocationNode { loc: CodeLocation { startIndex: lookahead.loc.startIndex, endIndex: location_to_deref.loc.endIndex }, d: MemoryLocationDetail::RAMDereference { val: location_to_deref } }))
+            },
+            TokenDetail::LeftBracket => {
+                self.advance_token();
+                // could be [expr], [:expr], [expr:], [expr:expr]
+
+                let lookahead2 = self.current_token();
+                if matches!(lookahead2.t, TokenDetail::Colon) {
+                    self.advance_token();
+                    let right = self.parse_expression()?;
+                    let expect_right_bracket = self.current_token();
+                    if !matches!(expect_right_bracket.t, TokenDetail::RightBracket) {
+                        return Err(ParseError{loc: lookahead.loc, message: "Missing a closing bracket".to_string()})
+                    }
+                    self.advance_token();
+                    let inner_location = self.parse_memory_location()?;
+                    Ok(Box::new(MemoryLocationNode { loc: CodeLocation { startIndex: lookahead.loc.startIndex, endIndex: inner_location.loc.endIndex }, d: MemoryLocationDetail::ArraySliceNoStart { end: right, arr: inner_location } }))
+
+                } else {
+                    let left = self.parse_expression()?;
+                    let lookahead3 = self.current_token();
+                    if matches!(lookahead3.t, TokenDetail::Colon) {
+                        let lookahead4 = self.advance_token();
+                        if matches!(lookahead4.t, TokenDetail::RightBracket) {
+                            self.advance_token();
+                            let inner_location = self.parse_memory_location()?;
+                            Ok(Box::new(MemoryLocationNode { loc: CodeLocation { startIndex: lookahead.loc.startIndex, endIndex: inner_location.loc.endIndex }, d: MemoryLocationDetail::ArraySliceNoEnd { start: left, arr: inner_location } }))
+                        } else {
+                            let right = self.parse_expression()?;
+                            let lookahead5 = self.current_token();
+                            if !matches!(lookahead5.t, TokenDetail::RightBracket) {
+                                return Err(ParseError { loc: lookahead.loc, message: "Missing a closing bracket".to_string() })
+                            }
+                            self.advance_token();
+                            let inner_location = self.parse_memory_location()?;
+                            Ok(Box::new(MemoryLocationNode { loc: CodeLocation { startIndex: lookahead.loc.startIndex, endIndex: inner_location.loc.endIndex }, d: MemoryLocationDetail::ArraySlice { start: left, end: right, arr: inner_location } }))
+                        }
+                    } else if matches!(lookahead3.t, TokenDetail::RightBracket) {
+                        self.advance_token();
+                        let inner_location = self.parse_memory_location()?;
+                        Ok(Box::new(MemoryLocationNode { loc: CodeLocation { startIndex: lookahead.loc.startIndex, endIndex: inner_location.loc.endIndex }, d: MemoryLocationDetail::ArrayIndex { i: left, arr: inner_location } }))
+                    } else {
+                        Err(ParseError { loc: lookahead3.loc, message: "Expected a colon or closing bracket".to_string() })
+                    }
+                }
+
+
+            }
+            _ => Err(ParseError { loc: lookahead.loc, message: "Expected a memory location".to_string() })
+        }
+    }
+
+    fn parse_type(& mut self) -> Result<Box<TypeNode>, ParseError> {
+        let lookahead = self.current_token();
+        if matches!(lookahead.t, TokenDetail::Keyword(Keyword::Const)) {
+            self.advance_token();
+            let body = self.parse_type_body()?;
+            Ok(Box::new(TypeNode { loc: CodeLocation { startIndex: lookahead.loc.startIndex, endIndex: body.loc.endIndex }, d: TypeDetail::ConstType { t: body } }))
+        } else {
+            let body = self.parse_type_body()?;
+            Ok(Box::new(TypeNode { loc: body.loc, d: TypeDetail::NonConstType { t: body } }))
+        }
+    }
+
+    fn parse_type_body(&mut self) -> Result<Box<TypeBodyNode>, ParseError> {
+        let lookahead = self.current_token();
+        match lookahead.t {
+            TokenDetail::Keyword(Keyword::Byte) => {
+                self.advance_token();
+                Ok(Box::new(TypeBodyNode { loc: lookahead.loc, d: TypeBodyDetail::Byte {  } }))
+            },
+            TokenDetail::Keyword(Keyword::Void) => {
+                self.advance_token();
+                Ok(Box::new(TypeBodyNode { loc: lookahead.loc, d: TypeBodyDetail::Void {  } }))
+            },
+            TokenDetail::Operator(Operator::Arobase) => {
+                self.advance_token();
+                let inner_type = self.parse_type_body()?;
+                Ok(Box::new(TypeBodyNode { loc: CodeLocation { startIndex: lookahead.loc.startIndex, endIndex: inner_type.loc.endIndex }, d: TypeBodyDetail::ROMPointer { t: inner_type } }))
+            },
+            TokenDetail::Operator(Operator::Asterix) => {
+                self.advance_token();
+                let inner_type = self.parse_type_body()?;
+                Ok(Box::new(TypeBodyNode { loc: CodeLocation { startIndex: lookahead.loc.startIndex, endIndex: inner_type.loc.endIndex }, d: TypeBodyDetail::RAMPointer { t: inner_type } }))
+            },
+            TokenDetail::LeftBracket => {
+                self.advance_token();
+                let size = self.parse_number()?;
+                if !matches!(self.current_token().t, TokenDetail::RightBracket) {
+                    return Err(ParseError { loc: lookahead.loc, message: "Missing a closing bracket".to_string() })
+                }
+                self.advance_token();
+                let inner_type = self.parse_type_body()?;
+                Ok(Box::new(TypeBodyNode { loc: CodeLocation { startIndex: lookahead.loc.startIndex, endIndex: inner_type.loc.endIndex }, d: TypeBodyDetail::Array { size, t: inner_type } }))
+            },
+            _ => {
+                Err(ParseError { loc: lookahead.loc, message: "Expected a type body".to_string() })
+            }
+        }
     }
 
     pub fn parse_expression(&mut self) -> Result<Box<ExpressionNode>, ParseError> {
@@ -122,23 +524,156 @@ impl Parser <'_> {
                 }
             }
 
+            TokenDetail::Identifier(_) => {
+                // could be function call or memory location
+                if matches!(self.tokens[self.offset+1].t, TokenDetail::LeftParenthesis) {
+                    self.parse_function_call()
+                } else {
+                    let node = self.parse_memory_location()?;
+                    Ok(Box::new(ExpressionNode { loc: node.loc, d: ExpressionDetail::MemoryValue { val: node } }))
+                }
+            }
+
             // memory location
-            TokenDetail::Identifier(_) |
             TokenDetail::Operator(Operator::Arobase) |
             TokenDetail::Operator(Operator::Asterix) |
-            TokenDetail::LeftBracket => todo!(),
+            TokenDetail::LeftBracket => {
+                let node = self.parse_memory_location()?;
+                Ok(Box::new(ExpressionNode { loc: node.loc, d: ExpressionDetail::MemoryValue { val: node } }))
+            }
 
             // reference
-            TokenDetail::Operator(Operator::Ampersand) => todo!(),
+            TokenDetail::Operator(Operator::Ampersand) => {
+                self.advance_token();
+                let node = self.parse_memory_location()?;
+                Ok(Box::new(ExpressionNode { loc: node.loc, d: ExpressionDetail::MemoryReference { val: node } }))
+            }
 
             // array
-            TokenDetail::LeftBrace => todo!(),
+            TokenDetail::LeftBrace => self.parse_array(),
+
+            // unary operators
+            TokenDetail::Operator(Operator::Tilde) | 
+            TokenDetail::Operator(Operator::Exclaimation) | 
+            TokenDetail::Operator(Operator::Underscore) => self.parse_unary(),
+            
 
 
-            _ => Err(ParseError { loc: lookahead.loc, message: format!("Expected a number, bracketed expression, memory location or reference") })
+            _ => Err(ParseError { loc: lookahead.loc, message: format!("Expected a number, array, unary operator, bracketed expression, memory location, or reference") })
         }
 
 
+    }
+
+    fn parse_function_call(&mut self) -> Result<Box<ExpressionNode>, ParseError> {
+        let expect_identifier = self.current_token();
+        let ident = match expect_identifier.t {
+            TokenDetail::Identifier(_ident) => Ok(_ident),
+            _ => Err(ParseError{loc: expect_identifier.loc, message: "Expected a function call".to_string()})
+        }?;
+        let expect_left_parenthesis = self.advance_token();
+        if !matches!(expect_left_parenthesis.t, TokenDetail::LeftParenthesis) {
+            return Err(ParseError { loc: expect_left_parenthesis.loc, message: "Expected a list of function arguments".to_string() });
+        }
+        
+        let lookahead = self.advance_token();
+        if matches!(lookahead.t, TokenDetail::RightParenthesis) {
+            Ok(Box::new(ExpressionNode { loc: CodeLocation { startIndex: expect_identifier.loc.startIndex, endIndex: lookahead.loc.endIndex }, d: ExpressionDetail::FunctionCall { ident, args: vec![] }}))
+        } else {
+            let mut args = vec![self.parse_expression()?];
+            while !matches!(self.current_token().t, TokenDetail::RightParenthesis) {
+                let lookahead2 = self.current_token();
+                if !matches!(lookahead2.t, TokenDetail::Comma) {
+                    return Err(ParseError { loc: lookahead2.loc, message: "Expected a comma or end of function arguments".to_string() });
+                }
+                self.advance_token();
+                args.push(self.parse_expression()?);
+            }
+            let final_token_loc = self.current_token().loc;
+            self.advance_token();
+            Ok(Box::new(ExpressionNode { loc: CodeLocation { startIndex: lookahead.loc.startIndex, endIndex: final_token_loc.endIndex }, d: ExpressionDetail::FunctionCall { ident, args } }))
+        }
+
+
+    }
+
+    fn parse_constant(&mut self) -> Result<Box<ConstantNode>, ParseError> {
+        let lookahead = self.current_token();
+        match lookahead.t {
+            TokenDetail::Operator(Operator::Minus) |
+            TokenDetail::Integer(_) => {
+                let number = self.parse_number()?;
+                Ok(Box::new(ConstantNode { loc: CodeLocation { startIndex: lookahead.loc.startIndex, endIndex: number.loc.endIndex }, d: ConstantDetail::Number { val: number } }))
+            },
+            TokenDetail::LeftBrace => {
+                self.parse_constant_array()
+            }
+            _ => Err(ParseError { loc: lookahead.loc, message: "Expected a constant".to_string() })
+        }
+
+    }
+
+    fn parse_constant_array(&mut self) -> Result<Box<ConstantNode>, ParseError> {
+        let lookahead = self.current_token();
+        if !matches!(lookahead.t, TokenDetail::LeftBrace) {
+            return Err(ParseError { loc: lookahead.loc, message: "Expected an array".to_string() });
+        }
+        let lookahead2 = self.advance_token();
+        if matches!(lookahead2.t, TokenDetail::RightBrace) {
+            Ok(Box::new(ConstantNode { loc: CodeLocation { startIndex: lookahead.loc.startIndex, endIndex: lookahead.loc.endIndex }, d: ConstantDetail::Array { val: vec![] } }))
+        } else {
+            let mut array_contents = vec![self.parse_constant()?];
+            while !matches!(self.current_token().t, TokenDetail::RightBrace) {
+                let lookahead3 = self.current_token();
+                if !matches!(lookahead3.t, TokenDetail::Comma) {
+                    return Err(ParseError { loc: lookahead3.loc, message: "Expected a comma or end of array contents".to_string() });
+                }
+                self.advance_token();
+                array_contents.push(self.parse_constant()?);
+            }
+            let final_token_loc = self.current_token().loc;
+            self.advance_token();
+            Ok(Box::new(ConstantNode { loc: CodeLocation { startIndex: lookahead.loc.startIndex, endIndex: final_token_loc.endIndex }, d: ConstantDetail::Array { val: array_contents } }))
+        }
+    }
+
+    fn parse_array(&mut self) -> Result<Box<ExpressionNode>, ParseError> {
+        let lookahead = self.current_token();
+        if !matches!(lookahead.t, TokenDetail::LeftBrace) {
+            return Err(ParseError { loc: lookahead.loc, message: "Expected an array".to_string() });
+        }
+        let lookahead2 = self.advance_token();
+        if matches!(lookahead2.t, TokenDetail::RightBrace) {
+            Ok(Box::new(ExpressionNode { loc: CodeLocation { startIndex: lookahead.loc.startIndex, endIndex: lookahead2.loc.endIndex }, d: ExpressionDetail::Array { val: vec![] } }))
+        } else {
+            let mut array_contents = vec![self.parse_expression()?];
+            while !matches!(self.current_token().t, TokenDetail::RightBrace) {
+                let lookahead3 = self.current_token();
+                if !matches!(lookahead3.t, TokenDetail::Comma) {
+                    return Err(ParseError { loc: lookahead3.loc, message: "Expected a comma or end of array contents".to_string() });
+                }
+                self.advance_token();
+                array_contents.push(self.parse_expression()?);
+            }
+            let final_token_loc = self.current_token().loc;
+            self.advance_token();
+            Ok(Box::new(ExpressionNode { loc: CodeLocation { startIndex: lookahead.loc.startIndex, endIndex: final_token_loc.endIndex }, d: ExpressionDetail::Array { val: array_contents } }))
+        }
+    }
+
+    fn parse_unary(&mut self) -> Result<Box<ExpressionNode>, ParseError> {
+        let lookahead = self.tokens[self.offset].clone();
+        self.offset += 1;
+
+        let node = self.parse_primary()?;
+        let unary_expr_loc = CodeLocation {startIndex: lookahead.loc.startIndex, endIndex: node.loc.endIndex};
+        
+        match lookahead.t {
+            TokenDetail::Operator(Operator::Tilde) => Ok(Box::new(ExpressionNode { loc: unary_expr_loc, d: ExpressionDetail::BitwiseNOT { val: node } })),
+            TokenDetail::Operator(Operator::Exclaimation) => Ok(Box::new(ExpressionNode { loc: unary_expr_loc, d: ExpressionDetail::LogicalNOT { val: node } })),
+            TokenDetail::Operator(Operator::Underscore) => Ok(Box::new(ExpressionNode { loc: unary_expr_loc, d: ExpressionDetail::Log2 { val: node } })),
+            _ => Err(ParseError { loc: lookahead.loc, message: "Expected a unary operator".to_string() })
+        }
     }
 
     fn parse_number(& mut self) -> Result<Box<NumberNode>, ParseError> {
@@ -195,10 +730,10 @@ fn binary_precedence(op: &Operator) -> usize {
         
         Operator::Asterix | // multiply
         Operator::ForwardSlash | // divide
-        Operator::Percent => 90, // modulo
+        Operator::Percent => 9, // modulo
         
         Operator::Plus |
-        Operator::Minus => 80,
+        Operator::Minus => 8,
         
         Operator::UnsignedLessThan |
         Operator::UnsignedGreaterThan |
@@ -207,19 +742,19 @@ fn binary_precedence(op: &Operator) -> usize {
         Operator::SignedLessThan |
         Operator::SignedGreaterThan |
         Operator::SignedLessThanOrEqualTo |
-        Operator::SignedGreaterThanOrEqualTo => 70,
+        Operator::SignedGreaterThanOrEqualTo => 7,
         
-        Operator::Equality => 60,
+        Operator::Equality => 6,
         
-        Operator::Ampersand => 50, // bitwise AND
+        Operator::Ampersand => 5, // bitwise AND
         
-        Operator::Caret => 40, // bitwise XOR
+        Operator::Caret => 4, // bitwise XOR
         
-        Operator::Bar => 30, // bitwise OR
+        Operator::Bar => 3, // bitwise OR
         
-        Operator::DoubleAmpersand => 20, // logical AND
+        Operator::DoubleAmpersand => 2, // logical AND
         
-        Operator::DoubleBar => 10, // logical OR
+        Operator::DoubleBar => 1, // logical OR
         
     }
 }
