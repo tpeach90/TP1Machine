@@ -25,7 +25,7 @@ pub enum TokenDetail {
     RightBrace,
     Comma,
     Operator(Operator),
-    Integer(String),
+    Number(u8),
     EOF,
 }
 
@@ -63,7 +63,6 @@ pub enum Keyword {
     Let,
     Byte,
     Void,
-    Function,
     Forever,
     While,
     Do,

@@ -134,7 +134,7 @@ impl Parser <'_> {
             TokenDetail::LeftParenthesis |
             TokenDetail::Operator(Operator::Ampersand) |
             TokenDetail::Operator(Operator::Minus) |
-            TokenDetail::Integer(_) |
+            TokenDetail::Number(_) |
             TokenDetail::Operator(Operator::Tilde) | 
             TokenDetail::Operator(Operator::Exclaimation) | 
             TokenDetail::Operator(Operator::Underscore) => {
@@ -502,7 +502,7 @@ impl Parser <'_> {
         match lookahead.t {
 
             // Number
-            TokenDetail::Integer(_) |
+            TokenDetail::Number(_) |
             TokenDetail::Operator(Operator::Minus) => {
                 let node = self.parse_number()?;
                 let loc = CodeLocation{ 
@@ -601,7 +601,7 @@ impl Parser <'_> {
         let lookahead = self.current_token();
         match lookahead.t {
             TokenDetail::Operator(Operator::Minus) |
-            TokenDetail::Integer(_) => {
+            TokenDetail::Number(_) => {
                 let number = self.parse_number()?;
                 Ok(Box::new(ConstantNode { loc: CodeLocation { startIndex: lookahead.loc.startIndex, endIndex: number.loc.endIndex }, d: ConstantDetail::Number { val: number } }))
             },
@@ -677,34 +677,23 @@ impl Parser <'_> {
     }
 
     fn parse_number(& mut self) -> Result<Box<NumberNode>, ParseError> {
-        let lookahead = self.tokens[self.offset].clone();
+        let lookahead = self.current_token();
         match lookahead.t {
-            TokenDetail::Integer(num) => {
-                match num.parse::<u8>() {
-                    Ok(number) => {
-                        self.offset += 1;
-                        Ok (Box::new(NumberNode { loc: lookahead.loc, val: number }))
-                    },
-                    Err(_) => Err(ParseError { loc: lookahead.loc, message: format!("Number out of allowed range [-128, 255]") })
-                }
+            TokenDetail::Number(num) => {
+                self.advance_token();
+                Ok (Box::new(NumberNode { loc: lookahead.loc, val: num }))
             },
             TokenDetail::Operator(Operator::Minus) => {
-                self.offset += 1;
-                let lookahead2 = self.tokens[self.offset].clone();
-                // expect an integer next
+                let lookahead2 = self.advance_token();
+                // expect a number next
                 match lookahead2.t {
-                    TokenDetail::Integer(num) => {
-                        match num.parse::<u8>() {
-                            Ok(number) => {
-                                if number <= 128 {
-                                    self.offset += 1;
-                                    // 2's complement
-                                    Ok (Box::new(NumberNode { loc: lookahead.loc, val: (!number).wrapping_add(1) }))
-                                } else {
-                                    Err(ParseError { loc: lookahead.loc, message: format!("Number out of allowed range [-128, 255]") })
-                                }
-                            },
-                            Err(_) => Err(ParseError { loc: lookahead.loc, message: format!("Number out of allowed range [-128, 255]") })
+                    TokenDetail::Number(num) => {
+                        if num > 128 {
+                            Err(ParseError { loc: CodeLocation { startIndex: lookahead.loc.startIndex, endIndex: lookahead2.loc.endIndex }, message: "Number must be at least -128".to_string() })
+                        } else {
+                            self.advance_token();
+                            // 2's compelement
+                            Ok (Box::new(NumberNode { loc: CodeLocation { startIndex: lookahead.loc.startIndex, endIndex: lookahead2.loc.endIndex }, val: (!num).wrapping_add(1) }))
                         }
                     }
                     _ => Err(ParseError { loc: lookahead2.loc, message: format!("Expected a number") })

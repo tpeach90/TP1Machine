@@ -15,22 +15,22 @@ mod lexer;
 fn main() {
 
     let tokens: Vec<Token> = vec![
-        Token{loc:CodeLocation::default(), text:String::default(), t: Integer(String::from("5")) },
+        Token{loc:CodeLocation::default(), text:String::default(), t: Number(5) },
         Token{loc:CodeLocation::default(), text:String::default(), t: Operator(Plus) },
-        Token{loc:CodeLocation::default(), text:String::default(), t: Integer(String::from("6")) },
+        Token{loc:CodeLocation::default(), text:String::default(), t: Number(6) },
         Token{loc:CodeLocation::default(), text:String::default(), t: Operator(DoubleAmpersand) },
-        Token{loc:CodeLocation::default(), text:String::default(), t: Integer(String::from("7")) },
+        Token{loc:CodeLocation::default(), text:String::default(), t: Number(7) },
         Token{loc:CodeLocation::default(), text:String::default(), t: Operator(Minus) },
         Token{loc:CodeLocation::default(), text:String::default(), t: Operator(Minus) },
-        Token{loc:CodeLocation::default(), text:String::default(), t: Integer(String::from("8")) },
+        Token{loc:CodeLocation::default(), text:String::default(), t: Number(8) },
         Token{loc:CodeLocation::default(), text:String::default(), t: Operator(Plus) },
-        Token{loc:CodeLocation::default(), text:String::default(), t: Integer(String::from("54")) },
+        Token{loc:CodeLocation::default(), text:String::default(), t: Number(54) },
         Token{loc:CodeLocation::default(), text:String::default(), t: Operator(Asterix) },
         Token{loc:CodeLocation::default(), text:String::default(), t: Operator(Tilde) },
         Token{loc:CodeLocation::default(), text:String::default(), t: LeftParenthesis },
-        Token{loc:CodeLocation::default(), text:String::default(), t: Integer(String::from("2")) },
+        Token{loc:CodeLocation::default(), text:String::default(), t: Number(2) },
         Token{loc:CodeLocation::default(), text:String::default(), t: Operator(Ampersand) },
-        Token{loc:CodeLocation::default(), text:String::default(), t: Integer(String::from("6")) },
+        Token{loc:CodeLocation::default(), text:String::default(), t: Number(6) },
         Token{loc:CodeLocation::default(), text:String::default(), t: RightParenthesis },
         Token{loc:CodeLocation::default(), text:String::default(), t: EOF }
     ];
