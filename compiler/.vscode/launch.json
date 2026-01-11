@@ -1,0 +1,32 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+
+        {
+            "name": "Debug executable 'compiler'",
+            "type": "lldb",
+            "request": "launch",
+            "cargo": {
+                "args": [
+                    "run",
+                    "--bin=compiler"
+                ]
+            },
+            "args": ["/home/thomas/Documents/projects/Architecture/TP1_Machine/compiler/testscripts/fib.tp1c"]
+        },
+        {
+            "name": "Debug unit tests in executable 'compiler'",
+            "type": "lldb",
+            "request": "launch",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--bin=compiler"
+                ]
+            }
+        }
+    ]
+}

@@ -1,0 +1,25 @@
+let const byte startOfScreen = -8;
+
+main {
+    let byte screenPointer = startOfScreen;
+    let byte prevTerm = 0;
+    let byte currTerm = 1;
+
+    ramWrite(screenPointer, prevTerm);
+    screenPointer = screenPointer + 1;
+    ramWrite(screenPointer, nextTerm);
+    screenPointer = screenPointer + 1;
+
+    forever {
+        let byte nextTerm = prevTerm + currTerm;
+        prevTerm = currTerm;
+        currTerm = nextTerm;
+
+        ramWrite(screenPointer, currTerm);
+        screenPointer = screenPointer + 1;
+
+        if flag BC {
+            screenPointer = startOfScreen;
+        };
+    };
+}

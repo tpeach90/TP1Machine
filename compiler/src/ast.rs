@@ -1,20 +1,6 @@
-use std::{fmt::Debug};
+use std::{fmt::Debug, vec};
 
 use crate::common::CodeLocation;
-
-pub enum Node {
-    ProgramNode(ProgramNode),
-    OuterStatementNode(OuterStatementNode),
-    TypeNode(TypeNode),
-    TypeBodyNode(TypeBodyNode),
-    BlockNode(BlockNode),
-    InnerStatementNode(InnerStatementNode),
-    ConditionNode(ConditionNode),
-    ConditionDetail(ConditionDetail),
-    ExpressionNode(ExpressionNode),
-    MemoryLocationNode(MemoryLocationNode),
-    ConstantNode(ConstantNode)
-}
 
 #[derive(Debug)]
 pub struct ProgramNode {
@@ -194,17 +180,258 @@ pub struct NumberNode {
 
 
 
+struct NodeFormatData {
+    children: Vec<(String, String)>, // role, inner Display
+    kind: String,
+}
 
 
+impl std::fmt::Display for ProgramNode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut children: Vec<(String, String)> = vec![];
+        for (i, outer_statement) in self.outer_statements.iter().enumerate() {
+            children.push((i.to_string(), (*outer_statement).to_string()));
+        }
+        children.push(("main".to_string(), self.main.to_string()));
+
+        write!(f, "{}", format_node(NodeFormatData { children, kind: "Program".to_string() }))
+    }
+}
 
 
+impl std::fmt::Display for OuterStatementNode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let nfd = match &self.d {
+            OuterStatementDetail::DeclarationStatement { r#type, identifier, val } => NodeFormatData {
+                children: vec![
+                    ("type".to_string(), r#type.to_string()),
+                    ("identifier".to_string(), identifier.to_owned()),
+                    ("val".to_string(), val.to_string())
+                ],
+                kind: "DeclarationStatement".to_string()
+            }
+        };
+        write!(f, "{}", format_node(nfd))
+    }
+}
+
+impl std::fmt::Display for TypeNode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let nfd = match &self.d {
+            TypeDetail::ConstType { t } => NodeFormatData{
+                children:vec![("body".to_string(), t.to_string())],
+                kind: "ConstType".to_string()
+            },
+            TypeDetail::NonConstType { t } => NodeFormatData{
+                children:vec![("body".to_string(), t.to_string())],
+                kind: "NonConstType".to_string()
+            },
+        };
+        write!(f, "{}", format_node(nfd))
+    }
+}
+
+impl std::fmt::Display for TypeBodyNode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let nfd = match &self.d {
+            TypeBodyDetail::Byte {  } => NodeFormatData{children: vec![], kind:"Byte".to_string()},
+            TypeBodyDetail::Void {  } => NodeFormatData{children: vec![], kind:"Void".to_string()},
+            TypeBodyDetail::ROMPointer { t } => NodeFormatData{children: vec![("inner".to_string(), t.to_string())], kind:"ROMPointer".to_string()},
+            TypeBodyDetail::RAMPointer { t } => NodeFormatData{children: vec![("inner".to_string(), t.to_string())], kind:"RAMPointer".to_string()},
+            TypeBodyDetail::Array { size, t } => NodeFormatData {
+                children: vec![
+                    ("size".to_string(), size.to_string()),
+                    ("inner".to_string(), t.to_string())
+                ],
+                kind: "Array".to_string()
+            }
+        };
+        write!(f, "{}", format_node(nfd))
+    }
+}
+
+impl std::fmt::Display for ConstantNode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let nfd = match &self.d {
+            ConstantDetail::Number { val } => NodeFormatData{children: vec![("val".to_string(), val.to_string())], kind: "Number".to_string()},
+            ConstantDetail::Array { val } => {
+                let mut children = vec![];
+                for (i, node) in val.iter().enumerate() {
+                    children.push((i.to_string(), node.to_string()));
+                }
+                NodeFormatData { children, kind: "Array".to_string() }
+            },
+        };
+        write!(f, "{}", format_node(nfd))
+    }
+}
+
+impl std::fmt::Display for BlockNode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut children = vec![];
+        for (i, node) in self.statements.iter().enumerate() {
+            children.push((i.to_string(), node.to_string()));
+        }
+        write!(f, "{}", format_node(NodeFormatData { children, kind: "Block".to_string() }))
+    }
+}
+
+impl std::fmt::Display for InnerStatementNode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let nfd = match &self.d {
+            InnerStatementDetail::ForeverLoop { body } => NodeFormatData {
+                children: vec![("body".to_string(), body.to_string())],
+                kind: "ForeverLoop".to_string()
+            },
+            InnerStatementDetail::WhileLoop { condition, body } => NodeFormatData {
+                children: vec![
+                    ("condition".to_string(), condition.to_string()),
+                    ("body".to_string(), body.to_string())
+                ],
+                kind: "WhileLoop".to_string()
+            },
+            InnerStatementDetail::DoWhileLoop { body, condition } => NodeFormatData {
+                children: vec![
+                    ("body".to_string(), body.to_string()),
+                    ("condition".to_string(), condition.to_string()),
+                ],
+                kind: "DoWhileLoop".to_string() 
+            },
+            InnerStatementDetail::IfStatement { condition, r#true } => NodeFormatData {
+                children: vec![
+                    ("condition".to_string(), condition.to_string()),
+                    ("true".to_string(), r#true.to_string()),
+                ],
+                kind: "IfStatement".to_string()
+            },
+            InnerStatementDetail::IfElseStatement { condition, r#true, r#false } => NodeFormatData {
+                children: vec![
+                    ("condition".to_string(), condition.to_string()),
+                    ("true".to_string(), r#true.to_string()),
+                    ("false".to_string(), r#false.to_string()),
+                ],
+                kind: "IfElseStatement".to_string()
+            },
+            InnerStatementDetail::DeclarationStatement { r#type, identifier, val } => NodeFormatData {
+                children: vec![
+                    ("type".to_string(), r#type.to_string()),
+                    ("identifier".to_string(), identifier.to_string()),
+                    ("val".to_string(), val.to_string()),
+                ],
+                kind: "DeclarationStatement".to_string()
+            },
+            InnerStatementDetail::AssignmentStatement { lvalue, rvalue } => NodeFormatData {
+                children: vec![
+                    ("lvalue".to_string(), lvalue.to_string()),
+                    ("rvalue".to_string(), rvalue.to_string()),
+                ],
+                kind: "AssignmentStatement".to_string()
+            },
+            InnerStatementDetail::ExpressionStatement { val } => NodeFormatData {
+                children: vec![
+                    ("val".to_string(), val.to_string()),
+                ],
+                kind: "ExpressionStatement".to_string()
+            },
+            InnerStatementDetail::Block { body } => NodeFormatData {
+                children: vec![
+                    ("body".to_string(), body.to_string()),
+                ],
+                kind: "Block".to_string()
+            },
+        };
+        write!(f, "{}", format_node(nfd))
+    }
+}
+
+impl std::fmt::Display for MemoryLocationNode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let nfd = match &self.d {
+            MemoryLocationDetail::Identifier { val } => NodeFormatData {
+                children: vec![("val".to_string(), val.to_owned())],
+                kind: "Identifier".to_string()
+            },
+            MemoryLocationDetail::ROMDereference { val } => NodeFormatData {
+                children: vec![("val".to_string(), val.to_string())],
+                kind: "ROMDereference".to_string()
+            },
+            MemoryLocationDetail::RAMDereference { val } => NodeFormatData {
+                children: vec![("val".to_string(), val.to_string())],
+                kind: "RAMDereference".to_string()
+            },
+            MemoryLocationDetail::ArrayIndex { i, arr } => NodeFormatData {
+                children: vec![
+                    ("i".to_string(), i.to_string()),
+                    ("arr".to_string(), arr.to_string()),
+                ],
+                kind: "ArrayIndex".to_string()
+            },
+            MemoryLocationDetail::ArraySlice { start, end, arr } => NodeFormatData {
+                children: vec![
+                    ("start".to_string(), start.to_string()),
+                    ("end".to_string(), end.to_string()),
+                    ("arr".to_string(), arr.to_string()),
+                ],
+                kind: "ArraySlice".to_string()
+            },
+            MemoryLocationDetail::ArraySliceNoStart { end, arr } => NodeFormatData {
+                children: vec![
+                    ("end".to_string(), end.to_string()),
+                    ("arr".to_string(), arr.to_string()),
+                ],
+                kind: "ArraySliceNoStart".to_string()
+            },
+            MemoryLocationDetail::ArraySliceNoEnd { start, arr } => NodeFormatData {
+                children: vec![
+                    ("start".to_string(), start.to_string()),
+                    ("arr".to_string(), arr.to_string()),
+                ],
+                kind: "ArraySliceNoEnd".to_string()
+            },
+        };
+        write!(f, "{}", format_node(nfd))
+
+    }
+}
 
 
+impl std::fmt::Display for ConditionNode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let nfd = match &self.d {
+            ConditionDetail::Branch { flag } => NodeFormatData {
+                children: vec![
+                    ("flag".to_string(), flag.to_string()),
+                ],
+                kind: "Branch".to_string()
+            },
+            ConditionDetail::Expression { val } => NodeFormatData {
+                children: vec![
+                    ("val".to_string(), val.to_string()),
+                ],
+                kind: "Expression".to_string()
+            }
+        };
+        write!(f, "{}", format_node(nfd))
 
+    }
+}
 
-
-
-
+impl std::fmt::Display for BranchFlag {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", match &self {
+            BranchFlag::BZ => "BZ".to_string(),
+            BranchFlag::BNZ => "BNZ".to_string(),
+            BranchFlag::BC => "BC".to_string(),
+            BranchFlag::BNC => "BNC".to_string(),
+            BranchFlag::BN => "BN".to_string(),
+            BranchFlag::BNN => "BNN".to_string(),
+            BranchFlag::BO => "BO".to_string(),
+            BranchFlag::BNO => "BNO".to_string(),
+            BranchFlag::BGTE => "BGTE".to_string(),
+            BranchFlag::BNGTE => "BNGTE".to_string(),
+        })
+    }
+}
 
 
 impl std::fmt::Display for ExpressionNode {
@@ -215,10 +442,16 @@ impl std::fmt::Display for ExpressionNode {
             ExpressionDetail::Number { val } => vec![("val".to_string(), (*val).to_string())],
 
             ExpressionDetail::Array { val } => val.iter().enumerate().map(|(i, n)| (i.to_string(), n.to_string())).collect(),
-            ExpressionDetail::FunctionCall { ident, args } => args.iter().enumerate().map(|(i, n)| (i.to_string(), n.to_string())).collect(),
+            ExpressionDetail::FunctionCall { ident, args } => {
+                let mut children = vec![("ident".to_string(), ident.to_owned())];
+                for (i, arg) in args.iter().enumerate() {
+                    children.push((i.to_string(), arg.to_string()))
+                }
+                children
+            },       
 
             ExpressionDetail::MemoryValue { val } |
-            ExpressionDetail::MemoryReference { val } => todo!(),
+            ExpressionDetail::MemoryReference { val } => vec![("val".to_string(), val.to_string())],
 
             ExpressionDetail::LeftShift { val } |
             ExpressionDetail::RightShift { val } |
@@ -250,7 +483,7 @@ impl std::fmt::Display for ExpressionNode {
         let kind = match &self.d {
             ExpressionDetail::Number { val: _ } => "Number".to_string(),
             ExpressionDetail::Array { val: _ } => "Array".to_string(),
-            ExpressionDetail::FunctionCall { ident, args: _ } => format!("FunctionCall ({})", ident),
+            ExpressionDetail::FunctionCall { ident: _, args: _ } => "FunctionCall".to_string(),
             ExpressionDetail::MemoryValue { val: _ } => "MemoryValue".to_string(),
             ExpressionDetail::MemoryReference { val: _ } => "MemoryReference".to_string(),
             ExpressionDetail::LeftShift { val: _ } => "LeftShift".to_string(),
@@ -279,33 +512,9 @@ impl std::fmt::Display for ExpressionNode {
             ExpressionDetail::UnsignedGreaterThan { left: _, right: _ } => "UnsignedGreaterThan".to_string(),
         };
 
-        let mut out = kind ;
-        for (i, (role, tree_str)) in children.iter().enumerate() {
-            out += "\n";
-            let lines: Vec<String> = (role.clone().to_string() + ": " + &tree_str).split("\n").map(|s| s.to_string()).collect();
-            for (j, line) in lines.iter().enumerate() {
-                if i != children.len() - 1  {
-                    if j == 0 {
-                        out += "├╴";
-                    } else {
-                        out += "│ ";
-                    }
-                } else {
-                    if j == 0 {
-                        out += "└╴";
-                    } else {
-                        out += "  ";
-                    }
-                }
-                out += line;
-                if  j != lines.len() - 1 {
-                    out += "\n";
-                }
-            }
+        let nfd = NodeFormatData{children, kind};
 
-        };
-
-        write!(f, "{}", out)
+        write!(f, "{}", format_node(nfd))
 
     }
 }
@@ -314,4 +523,35 @@ impl std::fmt::Display for NumberNode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.val)
     }
+}
+
+fn format_node(nfd: NodeFormatData) -> String {
+    let mut out = nfd.kind ;
+
+    for (i, (role, tree_str)) in nfd.children.iter().enumerate() {
+        out += "\n";
+        let lines: Vec<String> = (role.clone().to_string() + ": " + &tree_str).split("\n").map(|s| s.to_string()).collect();
+        for (j, line) in lines.iter().enumerate() {
+            if i != nfd.children.len() - 1  {
+                if j == 0 {
+                    out += "├╴";
+                } else {
+                    out += "│ ";
+                }
+            } else {
+                if j == 0 {
+                    out += "└╴";
+                } else {
+                    out += "  ";
+                }
+            }
+            out += line;
+            if  j != lines.len() - 1 {
+                out += "\n";
+            }
+        }
+
+    };
+
+    return out;
 }

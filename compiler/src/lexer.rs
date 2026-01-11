@@ -15,8 +15,8 @@ pub fn extract_tokens(source: String) -> Result<Vec<Token>, LexError> {
         match iter.peek() {
             None => {
                 let loc = match tokens.last() {
-                    Some(t) => CodeLocation { startIndex: t.loc.endIndex, endIndex: t.loc.endIndex },
-                    None => CodeLocation{startIndex:0, endIndex:0},
+                    Some(t) => CodeLocation { start_index: t.loc.end_index, end_index: t.loc.end_index },
+                    None => CodeLocation{start_index:0, end_index:0},
                 };
                 tokens.push(Token { loc, t: TokenDetail::EOF, text: "".to_string() });
                 return Ok(tokens);
@@ -47,11 +47,11 @@ pub fn extract_tokens(source: String) -> Result<Vec<Token>, LexError> {
                                     true
                                 }
                             } {iter.next();}
-                            tokens.push(Token { loc: CodeLocation { startIndex: i, endIndex: j+1 }, t: TokenDetail::Comment(text.clone()), text });
+                            tokens.push(Token { loc: CodeLocation { start_index: i, end_index: j+1 }, t: TokenDetail::Comment(text.clone()), text });
 
                         } else {
                             // divide
-                            tokens.push(Token { loc: CodeLocation { startIndex: i, endIndex: i+1 }, t: TokenDetail::Operator(Operator::ForwardSlash), text: char.to_string() });
+                            tokens.push(Token { loc: CodeLocation { start_index: i, end_index: i+1 }, t: TokenDetail::Operator(Operator::ForwardSlash), text: char.to_string() });
                         }
                     }
 
@@ -82,7 +82,7 @@ pub fn extract_tokens(source: String) -> Result<Vec<Token>, LexError> {
                             "flag" => TokenDetail::Keyword(Keyword::Flag),
                             ident => TokenDetail::Identifier(ident.to_string())
                         };
-                        tokens.push(Token { loc: CodeLocation { startIndex: i, endIndex: j+1 }, t: detail, text });
+                        tokens.push(Token { loc: CodeLocation { start_index: i, end_index: j+1 }, t: detail, text });
                     },
 
                     // integer and binary literals
@@ -108,7 +108,7 @@ pub fn extract_tokens(source: String) -> Result<Vec<Token>, LexError> {
                                             text += "1";
                                             num += u8::pow(2, k);
                                         }
-                                        _ => return Err(LexError { loc: CodeLocation { startIndex: i, endIndex: j+1 }, message: "Binary number must be 8 digits".to_string() })
+                                        _ => return Err(LexError { loc: CodeLocation { start_index: i, end_index: j+1 }, message: "Binary number must be 8 digits".to_string() })
                                     }
                                     iter.next();
                                 }
@@ -129,24 +129,24 @@ pub fn extract_tokens(source: String) -> Result<Vec<Token>, LexError> {
                                 } {iter.next();}
                                 match text.parse::<u8>() {
                                     Ok(num) => num,
-                                    Err(_) => return Err(LexError { loc: CodeLocation { startIndex: i, endIndex: j+1 }, message: format!("Integer literal greater than 255") })
+                                    Err(_) => return Err(LexError { loc: CodeLocation { start_index: i, end_index: j+1 }, message: format!("Integer literal greater than 255") })
                                 }
                             }
                             _ => {
                                 // 1-digit number
                                 match text.parse::<u8>() {
                                     Ok(num) => num,
-                                    Err(_) => return Err(LexError { loc: CodeLocation { startIndex: i, endIndex: j+1 }, message: format!("Integer literal must not be greater than 255") })
+                                    Err(_) => return Err(LexError { loc: CodeLocation { start_index: i, end_index: j+1 }, message: format!("Integer literal must not be greater than 255") })
                                 }
                             }
                         };
 
-                        tokens.push(Token { loc: CodeLocation { startIndex: i, endIndex: j+1 }, t: TokenDetail::Number(num), text })
+                        tokens.push(Token { loc: CodeLocation { start_index: i, end_index: j+1 }, t: TokenDetail::Number(num), text })
   
                     }
 
                     // unambiguous 1-char tokens
-                    ';' | '[' | ']' | '(' | ')' | '{' | '}' | ',' | ':' | '+' | '-' | '~' | '*' | '@' | '^' | '%' | '_'  => {
+                    ';' | '[' | ']' | '(' | ')' | '{' | '}' | ',' | ':' | '+' | '-' | '~' | '*' | '@' | '^' | '%' | '_' | '!' => {
                         iter.next();
                         let detail = match char {
                             ';' => TokenDetail::SemiColon, 
@@ -166,9 +166,10 @@ pub fn extract_tokens(source: String) -> Result<Vec<Token>, LexError> {
                             '^' => TokenDetail::Operator(Operator::Caret),
                             '%' => TokenDetail::Operator(Operator::Percent),
                             '_' => TokenDetail::Operator(Operator::Underscore),
+                            '!' => TokenDetail::Operator(Operator::Exclaimation),
                             _ => panic!("unambiguous 1-char token missing from match statement")
                         };
-                        tokens.push(Token { loc: CodeLocation { startIndex: i, endIndex: i+1 }, t: detail, text: char.to_string() });
+                        tokens.push(Token { loc: CodeLocation { start_index: i, end_index: i+1 }, t: detail, text: char.to_string() });
                     },
 
                     // signed and unsigned inequalities
@@ -225,7 +226,7 @@ pub fn extract_tokens(source: String) -> Result<Vec<Token>, LexError> {
                             ">>=" => TokenDetail::Operator(Operator::SignedGreaterThanOrEqualTo),
                             _ => panic!()
                         };
-                        tokens.push(Token { loc: CodeLocation { startIndex: i, endIndex: j+1 }, t: detail, text });
+                        tokens.push(Token { loc: CodeLocation { start_index: i, end_index: j+1 }, t: detail, text });
                     },
 
                     // different meaning if doubled
@@ -250,12 +251,12 @@ pub fn extract_tokens(source: String) -> Result<Vec<Token>, LexError> {
                             "||" => TokenDetail::Operator(Operator::DoubleBar),
                             _ => panic!()
                         };
-                        tokens.push(Token { loc: CodeLocation { startIndex: i, endIndex: j + text.len() }, t: detail, text })
+                        tokens.push(Token { loc: CodeLocation { start_index: i, end_index: j + text.len() }, t: detail, text })
                     }
 
                     // invalid character
                     _ => {
-                        return Err(LexError { loc: CodeLocation { startIndex: i, endIndex: i+1 }, message: "Unexpected character".to_string() })
+                        return Err(LexError { loc: CodeLocation { start_index: i, end_index: i+1 }, message: "Unexpected character".to_string() })
                     }
                 }
             }

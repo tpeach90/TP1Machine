@@ -70,3 +70,64 @@ pub enum Keyword {
     Else,
     Flag,
 }
+
+impl std::fmt::Display for Token {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let str = match &self.t {
+            TokenDetail::Comment(text) => format!("Comment: {}", text),
+            TokenDetail::SemiColon => format!("Semicolon"),
+            TokenDetail::Colon => format!("Colon"),
+            TokenDetail::Keyword(keyword) => format!("Keyword: {}", match keyword {
+                Keyword::Main => "Main",
+                Keyword::Const => "Const",
+                Keyword::Let => "Let",
+                Keyword::Byte => "Byte",
+                Keyword::Void => "Void",
+                Keyword::Forever => "Forever",
+                Keyword::While => "While",
+                Keyword::Do => "Do",
+                Keyword::If => "If",
+                Keyword::Else => "Else",
+                Keyword::Flag => "Flag",
+            }),
+            TokenDetail::Identifier(ident) => format!("Identifier: {}", ident),
+            TokenDetail::Equals => format!("Equals"),
+            TokenDetail::LeftBracket => format!("LeftBracket"),
+            TokenDetail::RightBracket => format!("RightBracket"),
+            TokenDetail::LeftParenthesis => format!("LeftParenthesis"),
+            TokenDetail::RightParenthesis => format!("RightParenthesis"),
+            TokenDetail::LeftBrace => format!("LeftBrace"),
+            TokenDetail::RightBrace => format!("RightBrace"),
+            TokenDetail::Comma => format!("Comma"),
+            TokenDetail::Operator(operator) => format!("Operator: {}", match operator {
+                Operator::Plus => "Plus",
+                Operator::Minus => "Minus",
+                Operator::Tilde => "Tilde",
+                Operator::Exclaimation => "Exclaimation",
+                Operator::Asterix => "Asterix",
+                Operator::Arobase => "Arobase",
+                Operator::Caret => "Caret",
+                Operator::ForwardSlash => "ForwardSlash",
+                Operator::Percent => "Percent",
+                Operator::Ampersand => "Ampersand",
+                Operator::Bar => "Bar",
+                Operator::Underscore => "Underscore",
+                Operator::DoubleBar => "DoubleBar",
+                Operator::DoubleAmpersand => "DoubleAmpersand",
+                Operator::Equality => "Equality",
+                Operator::UnsignedLessThan => "UnsignedLessThan",
+                Operator::UnsignedGreaterThan => "UnsignedGreaterThan",
+                Operator::UnsignedLessThanOrEqualTo => "UnsignedLessThanOrEqualTo",
+                Operator::UnsignedGreaterThanOrEqualTo => "UnsignedGreaterThanOrEqualTo",
+                Operator::SignedLessThan => "SignedLessThan",
+                Operator::SignedGreaterThan => "SignedGreaterThan",
+                Operator::SignedLessThanOrEqualTo => "SignedLessThanOrEqualTo",
+                Operator::SignedGreaterThanOrEqualTo => "SignedGreaterThanOrEqualTo",
+            }),
+            TokenDetail::Number(number) => format!("Number: {}", number),
+            TokenDetail::EOF => format!("EOF"),
+        };
+        write!(f, "{}", str)
+
+    }
+}
