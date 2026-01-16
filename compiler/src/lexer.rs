@@ -80,6 +80,8 @@ pub fn extract_tokens(source: String) -> Result<Vec<Token>, LexError> {
                             "if" => TokenDetail::Keyword(Keyword::If),
                             "else" => TokenDetail::Keyword(Keyword::Else),
                             "flag" => TokenDetail::Keyword(Keyword::Flag),
+                            "break" => TokenDetail::Keyword(Keyword::Break),
+                            "continue" => TokenDetail::Keyword(Keyword::Continue),
                             ident => TokenDetail::Identifier(ident.to_string())
                         };
                         tokens.push(Token { loc: CodeLocation { start_index: i, end_index: j+1 }, t: detail, text });

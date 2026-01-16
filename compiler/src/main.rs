@@ -8,6 +8,8 @@ mod ast;
 mod common;
 mod parser;
 mod lexer;
+mod ir;
+mod irgen;
 
 fn main() -> ExitCode {
 

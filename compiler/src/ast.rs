@@ -1,6 +1,6 @@
 use std::{fmt::Debug, vec};
 
-use crate::common::CodeLocation;
+use crate::common::{BranchFlag, CodeLocation};
 
 #[derive(Debug)]
 pub struct ProgramNode {
@@ -70,6 +70,8 @@ pub enum InnerStatementDetail {
     DeclarationStatement {r#type: Box <TypeNode>, identifier: String, val: Box <ExpressionNode>},
     AssignmentStatement{lvalue: Box <MemoryLocationNode>, rvalue: Box <ExpressionNode>},
     ExpressionStatement {val: Box <ExpressionNode>},
+    BreakStatement{},
+    ContinueStatement{},
     Block{body: Box <BlockNode>}
 }
 
@@ -83,20 +85,6 @@ pub struct ConditionNode {
 pub enum ConditionDetail {
     Branch {flag: BranchFlag},
     Expression {val: Box <ExpressionNode>}
-}
-
-#[derive(Debug)]
-pub enum BranchFlag {
-    BZ = 0,
-    BNZ = 1,
-    BC = 2,
-    BNC = 3,
-    BN = 4,
-    BNN = 5,
-    BO = 6,
-    BNO = 7,
-    BGTE = 8,
-    BNGTE = 9,
 }
 
 
@@ -332,6 +320,14 @@ impl std::fmt::Display for InnerStatementNode {
                     ("val".to_string(), val.to_string()),
                 ],
                 kind: "ExpressionStatement".to_string()
+            },
+            InnerStatementDetail::BreakStatement {  } => NodeFormatData { 
+                children: vec![], 
+                kind: "BreakStatement".to_string() 
+            },
+            InnerStatementDetail::ContinueStatement {  } => NodeFormatData { 
+                children: vec![], 
+                kind: "ContinueStatement".to_string() 
             },
             InnerStatementDetail::Block { body } => NodeFormatData {
                 children: vec![

@@ -69,6 +69,8 @@ pub enum Keyword {
     If,
     Else,
     Flag,
+    Break,
+    Continue
 }
 
 impl std::fmt::Display for Token {
@@ -89,6 +91,8 @@ impl std::fmt::Display for Token {
                 Keyword::If => "If",
                 Keyword::Else => "Else",
                 Keyword::Flag => "Flag",
+                Keyword::Break => "Break",
+                Keyword::Continue => "Continue"
             }),
             TokenDetail::Identifier(ident) => format!("Identifier: {}", ident),
             TokenDetail::Equals => format!("Equals"),

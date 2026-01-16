@@ -1,6 +1,6 @@
 use std::{usize};
 
-use crate::{ast::{BlockNode, BranchFlag, ConditionDetail, ConditionNode, ConstantDetail, ConstantNode, ExpressionDetail, ExpressionNode, InnerStatementDetail, InnerStatementNode, MemoryLocationDetail, MemoryLocationNode, NumberNode, OuterStatementDetail, OuterStatementNode, ProgramNode, TypeBodyDetail, TypeBodyNode, TypeDetail, TypeNode}, common::CodeLocation, tokens::{Keyword, Operator, Token, TokenDetail}};
+use crate::{ast::{BlockNode, ConditionDetail, ConditionNode, ConstantDetail, ConstantNode, ExpressionDetail, ExpressionNode, InnerStatementDetail, InnerStatementNode, MemoryLocationDetail, MemoryLocationNode, NumberNode, OuterStatementDetail, OuterStatementNode, ProgramNode, TypeBodyDetail, TypeBodyNode, TypeDetail, TypeNode}, common::{BranchFlag, CodeLocation}, tokens::{Keyword, Operator, Token, TokenDetail}};
 
 pub struct Parser<'b> {
     tokens: &'b Vec<Token>,
@@ -113,6 +113,14 @@ impl Parser <'_> {
             TokenDetail::Keyword(Keyword::Do) => self.parse_do_while_loop(),
             TokenDetail::Keyword(Keyword::If) => self.parse_if_statement(),
             TokenDetail::Keyword(Keyword::Let) => self.parse_inner_declaration_statement(),
+            TokenDetail::Keyword(Keyword::Break) => {
+                self.advance_token();
+                Ok(Box::new(InnerStatementNode { loc: lookahead.loc, d: InnerStatementDetail::BreakStatement {  } }))
+            },
+            TokenDetail::Keyword(Keyword::Continue) => {
+                self.advance_token();
+                Ok(Box::new(InnerStatementNode { loc: lookahead.loc, d: InnerStatementDetail::ContinueStatement {  } }))
+            }
 
             TokenDetail::Identifier(_) | 
             TokenDetail::Operator(Operator::Arobase) | 
