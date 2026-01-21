@@ -9,11 +9,21 @@ pub type BlockPointer = usize;
 pub struct IntermediateRepresentation {
     pub global_constants: HashMap<VarID, Vec<u8>>,
     pub basic_blocks: Vec<BasicBlock>,
-    pub id_to_ident: HashMap<VarID, String>
+    pub id_to_ident: HashMap<VarID, String>,
+    pub id_to_size: HashMap<VarID, usize>
 }
 
 impl IntermediateRepresentation {
-    fn get_block(&self, ptr: BlockPointer) -> Option<&BasicBlock>{
+    pub fn new() -> IntermediateRepresentation {
+        IntermediateRepresentation {
+            basic_blocks: vec![],
+            global_constants:HashMap::new(),
+            id_to_ident: HashMap::new(),
+            id_to_size: HashMap::new()
+        }
+    }
+
+    pub fn get_block(&self, ptr: BlockPointer) -> Option<&BasicBlock>{
         return self.basic_blocks.get(ptr);
     }
 }
@@ -45,7 +55,7 @@ pub struct Stmt {
     pub kind: StmtKind,
     pub arg1: Option<StmtArg>,
     pub arg2: Option<StmtArg>,
-    pub result: Option<StmtResult>,
+    pub result: Option<VarID>,
 }
 
 pub enum StmtKind {
@@ -57,19 +67,21 @@ pub enum StmtKind {
 
 pub enum StmtArg {
     Literal(u8),
-    Variable(Variable),
+    Variable(VarID),
+    RAMPointer(VarID/*pointer */, VarID/*array within which pointed.*/),
+    LocationOfVariable(VarID),
     Constant(Constant), // reference to rom variable
 }
 
-pub struct StmtResult {
-    pub var: Variable,
-    pub offset: u8, // used if writing to an array.
-}
+// pub struct StmtResult {
+//     pub var_id: VarID,
+//     pub offset: u8, // used if writing to an array.
+// }
 
-pub struct Variable {
-    pub id: VarID,
-    // pub version: VarVersion
-}
+// pub struct Variable {
+//     pub id: VarID,
+//     // pub version: VarVersion
+// }
 
 pub struct Constant {
     pub id: VarID,

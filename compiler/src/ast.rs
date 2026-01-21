@@ -1,6 +1,6 @@
-use std::{fmt::Debug, vec};
+use std::{cell::RefCell, fmt::Debug, vec};
 
-use crate::common::{BranchFlag, CodeLocation};
+use crate::{common::{BranchFlag, CodeLocation}, irgen2::Type};
 
 #[derive(Debug)]
 pub struct ProgramNode {
@@ -43,8 +43,8 @@ pub struct TypeBodyNode {
 pub enum TypeBodyDetail {
     Byte {},
     Void {},
-    ROMPointer {t: Box <TypeBodyNode>},
-    RAMPointer {t: Box <TypeBodyNode>},
+    // ROMPointer {t: Box <TypeBodyNode>},
+    // RAMPointer {t: Box <TypeBodyNode>},
     Array {size: Box<NumberNode>, t: Box <TypeBodyNode>},
 }
 
@@ -93,6 +93,7 @@ pub enum ConditionDetail {
 pub struct ExpressionNode {
     pub loc: CodeLocation,
     pub d: ExpressionDetail,
+    pub type_annotation: RefCell<Option<Type>>
 }
 
 #[derive(Debug)]
@@ -101,7 +102,7 @@ pub enum ExpressionDetail{
     Array {val: Vec<Box <ExpressionNode>>}, // array in braces.
     FunctionCall {ident: String, args: Vec<Box<ExpressionNode>>},
     MemoryValue {val: Box <MemoryLocationNode>},
-    MemoryReference {val: Box <MemoryLocationNode>}, // "&" followed by mem location
+    // MemoryReference {val: Box <MemoryLocationNode>}, // "&" followed by mem location
     LeftShift {val: Box <ExpressionNode>},
     RightShift {val: Box <ExpressionNode>},
     BitwiseNOT {val: Box <ExpressionNode>},
@@ -138,12 +139,12 @@ pub struct MemoryLocationNode {
 #[derive(Debug)]
 pub enum MemoryLocationDetail {
     Identifier {val: String},
-    ROMDereference {val: Box <MemoryLocationNode>},
-    RAMDereference {val: Box <MemoryLocationNode>},
+    // ROMDereference {val: Box <MemoryLocationNode>},
+    // RAMDereference {val: Box <MemoryLocationNode>},
     ArrayIndex {i: Box <ExpressionNode>, arr: Box <MemoryLocationNode>},
-    ArraySlice {start: Box <ExpressionNode>, end: Box <ExpressionNode>, arr: Box <MemoryLocationNode>},
-    ArraySliceNoStart {end: Box <ExpressionNode>, arr: Box <MemoryLocationNode>},
-    ArraySliceNoEnd {start: Box <ExpressionNode>, arr: Box <MemoryLocationNode>},
+    // ArraySlice {start: Box <ExpressionNode>, end: Box <ExpressionNode>, arr: Box <MemoryLocationNode>},
+    // ArraySliceNoStart {end: Box <ExpressionNode>, arr: Box <MemoryLocationNode>},
+    ArraySlice {start: Box <ExpressionNode>, arr: Box <MemoryLocationNode>},
 }
 
 #[derive(Debug)]
@@ -224,8 +225,8 @@ impl std::fmt::Display for TypeBodyNode {
         let nfd = match &self.d {
             TypeBodyDetail::Byte {  } => NodeFormatData{children: vec![], kind:"Byte".to_string()},
             TypeBodyDetail::Void {  } => NodeFormatData{children: vec![], kind:"Void".to_string()},
-            TypeBodyDetail::ROMPointer { t } => NodeFormatData{children: vec![("inner".to_string(), t.to_string())], kind:"ROMPointer".to_string()},
-            TypeBodyDetail::RAMPointer { t } => NodeFormatData{children: vec![("inner".to_string(), t.to_string())], kind:"RAMPointer".to_string()},
+            // TypeBodyDetail::ROMPointer { t } => NodeFormatData{children: vec![("inner".to_string(), t.to_string())], kind:"ROMPointer".to_string()},
+            // TypeBodyDetail::RAMPointer { t } => NodeFormatData{children: vec![("inner".to_string(), t.to_string())], kind:"RAMPointer".to_string()},
             TypeBodyDetail::Array { size, t } => NodeFormatData {
                 children: vec![
                     ("size".to_string(), size.to_string()),
@@ -347,14 +348,14 @@ impl std::fmt::Display for MemoryLocationNode {
                 children: vec![("val".to_string(), val.to_owned())],
                 kind: "Identifier".to_string()
             },
-            MemoryLocationDetail::ROMDereference { val } => NodeFormatData {
-                children: vec![("val".to_string(), val.to_string())],
-                kind: "ROMDereference".to_string()
-            },
-            MemoryLocationDetail::RAMDereference { val } => NodeFormatData {
-                children: vec![("val".to_string(), val.to_string())],
-                kind: "RAMDereference".to_string()
-            },
+            // MemoryLocationDetail::ROMDereference { val } => NodeFormatData {
+            //     children: vec![("val".to_string(), val.to_string())],
+            //     kind: "ROMDereference".to_string()
+            // },
+            // MemoryLocationDetail::RAMDereference { val } => NodeFormatData {
+            //     children: vec![("val".to_string(), val.to_string())],
+            //     kind: "RAMDereference".to_string()
+            // },
             MemoryLocationDetail::ArrayIndex { i, arr } => NodeFormatData {
                 children: vec![
                     ("i".to_string(), i.to_string()),
@@ -362,22 +363,22 @@ impl std::fmt::Display for MemoryLocationNode {
                 ],
                 kind: "ArrayIndex".to_string()
             },
-            MemoryLocationDetail::ArraySlice { start, end, arr } => NodeFormatData {
-                children: vec![
-                    ("start".to_string(), start.to_string()),
-                    ("end".to_string(), end.to_string()),
-                    ("arr".to_string(), arr.to_string()),
-                ],
-                kind: "ArraySlice".to_string()
-            },
-            MemoryLocationDetail::ArraySliceNoStart { end, arr } => NodeFormatData {
-                children: vec![
-                    ("end".to_string(), end.to_string()),
-                    ("arr".to_string(), arr.to_string()),
-                ],
-                kind: "ArraySliceNoStart".to_string()
-            },
-            MemoryLocationDetail::ArraySliceNoEnd { start, arr } => NodeFormatData {
+            // MemoryLocationDetail::ArraySlice { start, end, arr } => NodeFormatData {
+            //     children: vec![
+            //         ("start".to_string(), start.to_string()),
+            //         ("end".to_string(), end.to_string()),
+            //         ("arr".to_string(), arr.to_string()),
+            //     ],
+            //     kind: "ArraySlice".to_string()
+            // },
+            // MemoryLocationDetail::ArraySliceNoStart { end, arr } => NodeFormatData {
+            //     children: vec![
+            //         ("end".to_string(), end.to_string()),
+            //         ("arr".to_string(), arr.to_string()),
+            //     ],
+            //     kind: "ArraySliceNoStart".to_string()
+            // },
+            MemoryLocationDetail::ArraySlice { start, arr } => NodeFormatData {
                 children: vec![
                     ("start".to_string(), start.to_string()),
                     ("arr".to_string(), arr.to_string()),
@@ -446,8 +447,8 @@ impl std::fmt::Display for ExpressionNode {
                 children
             },       
 
-            ExpressionDetail::MemoryValue { val } |
-            ExpressionDetail::MemoryReference { val } => vec![("val".to_string(), val.to_string())],
+            ExpressionDetail::MemoryValue { val } /*|
+            ExpressionDetail::MemoryReference { val }*/ => vec![("val".to_string(), val.to_string())],
 
             ExpressionDetail::LeftShift { val } |
             ExpressionDetail::RightShift { val } |
@@ -476,37 +477,7 @@ impl std::fmt::Display for ExpressionNode {
             ExpressionDetail::UnsignedGreaterThan { left, right } => vec![(String::from("left"), left.to_string()), (String::from("right"), right.to_string())],
         };
         
-        let kind = match &self.d {
-            ExpressionDetail::Number { val: _ } => "Number".to_string(),
-            ExpressionDetail::Array { val: _ } => "Array".to_string(),
-            ExpressionDetail::FunctionCall { ident: _, args: _ } => "FunctionCall".to_string(),
-            ExpressionDetail::MemoryValue { val: _ } => "MemoryValue".to_string(),
-            ExpressionDetail::MemoryReference { val: _ } => "MemoryReference".to_string(),
-            ExpressionDetail::LeftShift { val: _ } => "LeftShift".to_string(),
-            ExpressionDetail::RightShift { val: _ } => "RightShift".to_string(),
-            ExpressionDetail::BitwiseNOT { val: _ } => "BitwiseNOT".to_string(),
-            ExpressionDetail::LogicalNOT { val: _ } => "LogicalNOT".to_string(),
-            ExpressionDetail::Log2 { val: _ } => "Log2".to_string(),
-            ExpressionDetail::Add { left: _, right: _ } => "Add".to_string(),
-            ExpressionDetail::Subtract { left: _, right: _ } => "Subtract".to_string(),
-            ExpressionDetail::Multiply { left: _, right: _} => "Multiply".to_string(),
-            ExpressionDetail::Divide {left: _, right: _ } => "Divide".to_string(),
-            ExpressionDetail::Modulo { left: _, right: _ } => "Modulo".to_string(),
-            ExpressionDetail::BitwiseXOR { left: _, right: _ } => "BitwiseXOR".to_string(),
-            ExpressionDetail::BitwiseAND { left: _, right: _ } => "BitwiseAND".to_string(),
-            ExpressionDetail::BitwiseOR { left: _, right: _ } => "BitwiseOR".to_string(),
-            ExpressionDetail::EqualTo { left: _, right: _ } => "EqualTo".to_string(),
-            ExpressionDetail::LogicalOR { left: _, right: _ } => "LogicalOR".to_string(),
-            ExpressionDetail::LogicalAND { left: _, right: _ } => "LogicalAND".to_string(),
-            ExpressionDetail::SignedGreaterThanOrEqualTo { left: _, right: _ } => "SignedGreaterThanOrEqualTo".to_string(),
-            ExpressionDetail::SignedLessThanOrEqualTo { left: _, right: _ } => "SignedLessThanOrEqualTo".to_string(),
-            ExpressionDetail::SignedLessThan { left: _, right: _ } => "SignedLessThan".to_string(),
-            ExpressionDetail::SignedGreaterThan { left: _, right: _ } => "SignedGreaterThan".to_string(),
-            ExpressionDetail::UnsignedGreaterThanOrEqualTo { left: _, right: _ } => "UnsignedGreaterThanOrEqualTo".to_string(),
-            ExpressionDetail::UnsignedLessThanOrEqualTo { left: _, right: _ } => "UnsignedLessThanOrEqualTo".to_string(),
-            ExpressionDetail::UnsignedLessThan { left: _, right: _ } => "UnsignedLessThan".to_string(),
-            ExpressionDetail::UnsignedGreaterThan { left: _, right: _ } => "UnsignedGreaterThan".to_string(),
-        };
+        let kind = self.d.kind();
 
         let nfd = NodeFormatData{children, kind};
 
@@ -550,4 +521,40 @@ fn format_node(nfd: NodeFormatData) -> String {
     };
 
     return out;
+}
+
+impl ExpressionDetail {
+    pub fn kind(&self) -> String {
+        match self {
+            ExpressionDetail::Number { val: _ } => "Number".to_string(),
+            ExpressionDetail::Array { val: _ } => "Array".to_string(),
+            ExpressionDetail::FunctionCall { ident: _, args: _ } => "FunctionCall".to_string(),
+            ExpressionDetail::MemoryValue { val: _ } => "MemoryValue".to_string(),
+            // ExpressionDetail::MemoryReference { val: _ } => "MemoryReference".to_string(),
+            ExpressionDetail::LeftShift { val: _ } => "LeftShift".to_string(),
+            ExpressionDetail::RightShift { val: _ } => "RightShift".to_string(),
+            ExpressionDetail::BitwiseNOT { val: _ } => "BitwiseNOT".to_string(),
+            ExpressionDetail::LogicalNOT { val: _ } => "LogicalNOT".to_string(),
+            ExpressionDetail::Log2 { val: _ } => "Log2".to_string(),
+            ExpressionDetail::Add { left: _, right: _ } => "Add".to_string(),
+            ExpressionDetail::Subtract { left: _, right: _ } => "Subtract".to_string(),
+            ExpressionDetail::Multiply { left: _, right: _} => "Multiply".to_string(),
+            ExpressionDetail::Divide {left: _, right: _ } => "Divide".to_string(),
+            ExpressionDetail::Modulo { left: _, right: _ } => "Modulo".to_string(),
+            ExpressionDetail::BitwiseXOR { left: _, right: _ } => "BitwiseXOR".to_string(),
+            ExpressionDetail::BitwiseAND { left: _, right: _ } => "BitwiseAND".to_string(),
+            ExpressionDetail::BitwiseOR { left: _, right: _ } => "BitwiseOR".to_string(),
+            ExpressionDetail::EqualTo { left: _, right: _ } => "EqualTo".to_string(),
+            ExpressionDetail::LogicalOR { left: _, right: _ } => "LogicalOR".to_string(),
+            ExpressionDetail::LogicalAND { left: _, right: _ } => "LogicalAND".to_string(),
+            ExpressionDetail::SignedGreaterThanOrEqualTo { left: _, right: _ } => "SignedGreaterThanOrEqualTo".to_string(),
+            ExpressionDetail::SignedLessThanOrEqualTo { left: _, right: _ } => "SignedLessThanOrEqualTo".to_string(),
+            ExpressionDetail::SignedLessThan { left: _, right: _ } => "SignedLessThan".to_string(),
+            ExpressionDetail::SignedGreaterThan { left: _, right: _ } => "SignedGreaterThan".to_string(),
+            ExpressionDetail::UnsignedGreaterThanOrEqualTo { left: _, right: _ } => "UnsignedGreaterThanOrEqualTo".to_string(),
+            ExpressionDetail::UnsignedLessThanOrEqualTo { left: _, right: _ } => "UnsignedLessThanOrEqualTo".to_string(),
+            ExpressionDetail::UnsignedLessThan { left: _, right: _ } => "UnsignedLessThan".to_string(),
+            ExpressionDetail::UnsignedGreaterThan { left: _, right: _ } => "UnsignedGreaterThan".to_string(),
+        }
+    }
 }

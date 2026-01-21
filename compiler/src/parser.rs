@@ -1,4 +1,4 @@
-use std::{usize};
+use std::{cell::RefCell, usize};
 
 use crate::{ast::{BlockNode, ConditionDetail, ConditionNode, ConstantDetail, ConstantNode, ExpressionDetail, ExpressionNode, InnerStatementDetail, InnerStatementNode, MemoryLocationDetail, MemoryLocationNode, NumberNode, OuterStatementDetail, OuterStatementNode, ProgramNode, TypeBodyDetail, TypeBodyNode, TypeDetail, TypeNode}, common::{BranchFlag, CodeLocation}, tokens::{Keyword, Operator, Token, TokenDetail}};
 
@@ -123,8 +123,6 @@ impl Parser <'_> {
             }
 
             TokenDetail::Identifier(_) | 
-            TokenDetail::Operator(Operator::Arobase) | 
-            TokenDetail::Operator(Operator::Asterix) |
             TokenDetail::LeftBracket => {
                 // could be expression or assignment
                 // look to see if there's an Equals before the next SemiColon or EOF
@@ -139,7 +137,6 @@ impl Parser <'_> {
             }
 
             TokenDetail::LeftParenthesis |
-            TokenDetail::Operator(Operator::Ampersand) |
             TokenDetail::Operator(Operator::Minus) |
             TokenDetail::Number(_) |
             TokenDetail::Operator(Operator::Tilde) | 
@@ -320,59 +317,34 @@ impl Parser <'_> {
                 self.advance_token();
                 Ok(Box::new(MemoryLocationNode { loc: lookahead.loc, d: MemoryLocationDetail::Identifier { val: ident } }))
             },
-            TokenDetail::Operator(Operator::Arobase) => {
-                self.advance_token();
-                let location_to_deref = self.parse_memory_location()?;
-                Ok(Box::new(MemoryLocationNode { loc: CodeLocation { start_index: lookahead.loc.start_index, end_index: location_to_deref.loc.end_index }, d: MemoryLocationDetail::ROMDereference { val: location_to_deref } }))
-            },
-            TokenDetail::Operator(Operator::Asterix) => {
-                self.advance_token();
-                let location_to_deref = self.parse_memory_location()?;
-                Ok(Box::new(MemoryLocationNode { loc: CodeLocation { start_index: lookahead.loc.start_index, end_index: location_to_deref.loc.end_index }, d: MemoryLocationDetail::RAMDereference { val: location_to_deref } }))
-            },
             TokenDetail::LeftBracket => {
                 self.advance_token();
-                // could be [expr], [:expr], [expr:], [expr:expr]
+                // could be [expr], [expr:]
 
+                // [expr
+                let left = self.parse_expression()?;
                 let lookahead2 = self.current_token();
                 if matches!(lookahead2.t, TokenDetail::Colon) {
-                    self.advance_token();
-                    let right = self.parse_expression()?;
-                    let expect_right_bracket = self.current_token();
-                    if !matches!(expect_right_bracket.t, TokenDetail::RightBracket) {
+                    // [expr:
+                    
+                    let lookahead3 = self.advance_token();
+                    if !matches!(lookahead3.t, TokenDetail::RightBracket) {
                         return Err(ParseError{loc: lookahead.loc, message: "Missing a closing bracket".to_string()})
                     }
+
                     self.advance_token();
                     let inner_location = self.parse_memory_location()?;
-                    Ok(Box::new(MemoryLocationNode { loc: CodeLocation { start_index: lookahead.loc.start_index, end_index: inner_location.loc.end_index }, d: MemoryLocationDetail::ArraySliceNoStart { end: right, arr: inner_location } }))
+                    Ok(Box::new(MemoryLocationNode { loc: CodeLocation { start_index: lookahead.loc.start_index, end_index: inner_location.loc.end_index }, d: MemoryLocationDetail::ArraySlice { start: left, arr: inner_location } }))
 
+                } else if matches!(lookahead2.t, TokenDetail::RightBracket) {
+                    // [expr]
+                    self.advance_token();
+                    let inner_location = self.parse_memory_location()?;
+                    Ok(Box::new(MemoryLocationNode { loc: CodeLocation { start_index: lookahead.loc.start_index, end_index: inner_location.loc.end_index }, d: MemoryLocationDetail::ArrayIndex { i: left, arr: inner_location } }))
                 } else {
-                    let left = self.parse_expression()?;
-                    let lookahead3 = self.current_token();
-                    if matches!(lookahead3.t, TokenDetail::Colon) {
-                        let lookahead4 = self.advance_token();
-                        if matches!(lookahead4.t, TokenDetail::RightBracket) {
-                            self.advance_token();
-                            let inner_location = self.parse_memory_location()?;
-                            Ok(Box::new(MemoryLocationNode { loc: CodeLocation { start_index: lookahead.loc.start_index, end_index: inner_location.loc.end_index }, d: MemoryLocationDetail::ArraySliceNoEnd { start: left, arr: inner_location } }))
-                        } else {
-                            let right = self.parse_expression()?;
-                            let lookahead5 = self.current_token();
-                            if !matches!(lookahead5.t, TokenDetail::RightBracket) {
-                                return Err(ParseError { loc: lookahead.loc, message: "Missing a closing bracket".to_string() })
-                            }
-                            self.advance_token();
-                            let inner_location = self.parse_memory_location()?;
-                            Ok(Box::new(MemoryLocationNode { loc: CodeLocation { start_index: lookahead.loc.start_index, end_index: inner_location.loc.end_index }, d: MemoryLocationDetail::ArraySlice { start: left, end: right, arr: inner_location } }))
-                        }
-                    } else if matches!(lookahead3.t, TokenDetail::RightBracket) {
-                        self.advance_token();
-                        let inner_location = self.parse_memory_location()?;
-                        Ok(Box::new(MemoryLocationNode { loc: CodeLocation { start_index: lookahead.loc.start_index, end_index: inner_location.loc.end_index }, d: MemoryLocationDetail::ArrayIndex { i: left, arr: inner_location } }))
-                    } else {
-                        Err(ParseError { loc: lookahead3.loc, message: "Expected a colon or closing bracket".to_string() })
-                    }
+                    Err(ParseError { loc: lookahead2.loc, message: "Expected a colon or closing bracket".to_string() })
                 }
+             
 
 
             }
@@ -403,16 +375,16 @@ impl Parser <'_> {
                 self.advance_token();
                 Ok(Box::new(TypeBodyNode { loc: lookahead.loc, d: TypeBodyDetail::Void {  } }))
             },
-            TokenDetail::Operator(Operator::Arobase) => {
-                self.advance_token();
-                let inner_type = self.parse_type_body()?;
-                Ok(Box::new(TypeBodyNode { loc: CodeLocation { start_index: lookahead.loc.start_index, end_index: inner_type.loc.end_index }, d: TypeBodyDetail::ROMPointer { t: inner_type } }))
-            },
-            TokenDetail::Operator(Operator::Asterix) => {
-                self.advance_token();
-                let inner_type = self.parse_type_body()?;
-                Ok(Box::new(TypeBodyNode { loc: CodeLocation { start_index: lookahead.loc.start_index, end_index: inner_type.loc.end_index }, d: TypeBodyDetail::RAMPointer { t: inner_type } }))
-            },
+            // TokenDetail::Operator(Operator::Arobase) => {
+            //     self.advance_token();
+            //     let inner_type = self.parse_type_body()?;
+            //     Ok(Box::new(TypeBodyNode { loc: CodeLocation { start_index: lookahead.loc.start_index, end_index: inner_type.loc.end_index }, d: TypeBodyDetail::ROMPointer { t: inner_type } }))
+            // },
+            // TokenDetail::Operator(Operator::Asterix) => {
+            //     self.advance_token();
+            //     let inner_type = self.parse_type_body()?;
+            //     Ok(Box::new(TypeBodyNode { loc: CodeLocation { start_index: lookahead.loc.start_index, end_index: inner_type.loc.end_index }, d: TypeBodyDetail::RAMPointer { t: inner_type } }))
+            // },
             TokenDetail::LeftBracket => {
                 self.advance_token();
                 let size = self.parse_number()?;
@@ -472,7 +444,7 @@ impl Parser <'_> {
             let combined_expression_detail = match op1 {
                 Operator::Exclaimation |
                 Operator::Tilde |
-                Operator::Arobase |
+                // Operator::Arobase |
                 Operator::Underscore => Err(ParseError{loc: op1_token.loc, message:format!("{} is not a binary operator", op1_token.text)}),
                 
                 Operator::Plus => Ok(ExpressionDetail::Add { left: lhs, right: rhs }),
@@ -496,7 +468,7 @@ impl Parser <'_> {
                 Operator::SignedGreaterThanOrEqualTo => Ok(ExpressionDetail::SignedGreaterThanOrEqualTo{ left: lhs, right: rhs }),
             }?;
 
-            lhs = Box::new(ExpressionNode { loc: combined_location, d: combined_expression_detail })
+            lhs = Box::new(ExpressionNode { loc: combined_location, d: combined_expression_detail, type_annotation: RefCell::new(None) })
 
         }
 
@@ -517,7 +489,7 @@ impl Parser <'_> {
                     start_index: lookahead.loc.start_index, 
                     end_index: self.tokens[self.offset].loc.start_index
                 };
-                Ok(Box::new(ExpressionNode{loc:loc, d:ExpressionDetail::Number { val: node }}))
+                Ok(Box::new(ExpressionNode{loc:loc, d:ExpressionDetail::Number { val: node }, type_annotation: RefCell::new(None)}))
             }
             
             // bracketed expression
@@ -538,24 +510,24 @@ impl Parser <'_> {
                     self.parse_function_call()
                 } else {
                     let node = self.parse_memory_location()?;
-                    Ok(Box::new(ExpressionNode { loc: node.loc, d: ExpressionDetail::MemoryValue { val: node } }))
+                    Ok(Box::new(ExpressionNode { loc: node.loc, d: ExpressionDetail::MemoryValue { val: node }, type_annotation: RefCell::new(None) }))
                 }
             }
 
-            // memory location
-            TokenDetail::Operator(Operator::Arobase) |
-            TokenDetail::Operator(Operator::Asterix) |
-            TokenDetail::LeftBracket => {
-                let node = self.parse_memory_location()?;
-                Ok(Box::new(ExpressionNode { loc: node.loc, d: ExpressionDetail::MemoryValue { val: node } }))
-            }
+            // // memory location
+            // TokenDetail::Operator(Operator::Arobase) |
+            // TokenDetail::Operator(Operator::Asterix) |
+            // TokenDetail::LeftBracket => {
+            //     let node = self.parse_memory_location()?;
+            //     Ok(Box::new(ExpressionNode { loc: node.loc, d: ExpressionDetail::MemoryValue { val: node } }))
+            // }
 
-            // reference
-            TokenDetail::Operator(Operator::Ampersand) => {
-                self.advance_token();
-                let node = self.parse_memory_location()?;
-                Ok(Box::new(ExpressionNode { loc: node.loc, d: ExpressionDetail::MemoryReference { val: node } }))
-            }
+            // // reference
+            // TokenDetail::Operator(Operator::Ampersand) => {
+            //     self.advance_token();
+            //     let node = self.parse_memory_location()?;
+            //     Ok(Box::new(ExpressionNode { loc: node.loc, d: ExpressionDetail::MemoryReference { val: node } }))
+            // }
 
             // array
             TokenDetail::LeftBrace => self.parse_array(),
@@ -586,7 +558,7 @@ impl Parser <'_> {
         
         let lookahead = self.advance_token();
         if matches!(lookahead.t, TokenDetail::RightParenthesis) {
-            Ok(Box::new(ExpressionNode { loc: CodeLocation { start_index: expect_identifier.loc.start_index, end_index: lookahead.loc.end_index }, d: ExpressionDetail::FunctionCall { ident, args: vec![] }}))
+            Ok(Box::new(ExpressionNode { loc: CodeLocation { start_index: expect_identifier.loc.start_index, end_index: lookahead.loc.end_index }, d: ExpressionDetail::FunctionCall { ident, args: vec![] }, type_annotation: RefCell::new(None)}))
         } else {
             let mut args = vec![self.parse_expression()?];
             while !matches!(self.current_token().t, TokenDetail::RightParenthesis) {
@@ -599,7 +571,7 @@ impl Parser <'_> {
             }
             let final_token_loc = self.current_token().loc;
             self.advance_token();
-            Ok(Box::new(ExpressionNode { loc: CodeLocation { start_index: lookahead.loc.start_index, end_index: final_token_loc.end_index }, d: ExpressionDetail::FunctionCall { ident, args } }))
+            Ok(Box::new(ExpressionNode { loc: CodeLocation { start_index: lookahead.loc.start_index, end_index: final_token_loc.end_index }, d: ExpressionDetail::FunctionCall { ident, args } , type_annotation: RefCell::new(None)}))
         }
 
 
@@ -652,7 +624,7 @@ impl Parser <'_> {
         }
         let lookahead2 = self.advance_token();
         if matches!(lookahead2.t, TokenDetail::RightBrace) {
-            Ok(Box::new(ExpressionNode { loc: CodeLocation { start_index: lookahead.loc.start_index, end_index: lookahead2.loc.end_index }, d: ExpressionDetail::Array { val: vec![] } }))
+            Ok(Box::new(ExpressionNode { loc: CodeLocation { start_index: lookahead.loc.start_index, end_index: lookahead2.loc.end_index }, d: ExpressionDetail::Array { val: vec![] } , type_annotation: RefCell::new(None)}))
         } else {
             let mut array_contents = vec![self.parse_expression()?];
             while !matches!(self.current_token().t, TokenDetail::RightBrace) {
@@ -665,7 +637,7 @@ impl Parser <'_> {
             }
             let final_token_loc = self.current_token().loc;
             self.advance_token();
-            Ok(Box::new(ExpressionNode { loc: CodeLocation { start_index: lookahead.loc.start_index, end_index: final_token_loc.end_index }, d: ExpressionDetail::Array { val: array_contents } }))
+            Ok(Box::new(ExpressionNode { loc: CodeLocation { start_index: lookahead.loc.start_index, end_index: final_token_loc.end_index }, d: ExpressionDetail::Array { val: array_contents } , type_annotation: RefCell::new(None)}))
         }
     }
 
@@ -677,9 +649,9 @@ impl Parser <'_> {
         let unary_expr_loc = CodeLocation {start_index: lookahead.loc.start_index, end_index: node.loc.end_index};
         
         match lookahead.t {
-            TokenDetail::Operator(Operator::Tilde) => Ok(Box::new(ExpressionNode { loc: unary_expr_loc, d: ExpressionDetail::BitwiseNOT { val: node } })),
-            TokenDetail::Operator(Operator::Exclaimation) => Ok(Box::new(ExpressionNode { loc: unary_expr_loc, d: ExpressionDetail::LogicalNOT { val: node } })),
-            TokenDetail::Operator(Operator::Underscore) => Ok(Box::new(ExpressionNode { loc: unary_expr_loc, d: ExpressionDetail::Log2 { val: node } })),
+            TokenDetail::Operator(Operator::Tilde) => Ok(Box::new(ExpressionNode { loc: unary_expr_loc, d: ExpressionDetail::BitwiseNOT { val: node } , type_annotation: RefCell::new(None)})),
+            TokenDetail::Operator(Operator::Exclaimation) => Ok(Box::new(ExpressionNode { loc: unary_expr_loc, d: ExpressionDetail::LogicalNOT { val: node } , type_annotation: RefCell::new(None)})),
+            TokenDetail::Operator(Operator::Underscore) => Ok(Box::new(ExpressionNode { loc: unary_expr_loc, d: ExpressionDetail::Log2 { val: node }, type_annotation: RefCell::new(None) })),
             _ => Err(ParseError { loc: lookahead.loc, message: "Expected a unary operator".to_string() })
         }
     }
@@ -722,7 +694,7 @@ fn binary_precedence(op: &Operator) -> usize {
         // unary ops not relevant
         Operator::Exclaimation |
         Operator::Tilde |
-        Operator::Arobase |
+        // Operator::Arobase |
         Operator::Underscore => 0,
         
         Operator::Asterix | // multiply
@@ -760,7 +732,6 @@ fn is_maybe_binary(op: &Operator) -> bool {
     match op {
         Operator::Tilde |
         Operator::Exclaimation |
-        Operator::Arobase |
         Operator::Underscore => false,
         
         Operator::Plus |

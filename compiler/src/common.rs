@@ -6,7 +6,7 @@ pub struct CodeLocation {
 
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum BranchFlag {
     BZ = 0,
     BNZ = 1,

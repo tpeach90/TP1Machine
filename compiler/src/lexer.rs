@@ -148,7 +148,7 @@ pub fn extract_tokens(source: String) -> Result<Vec<Token>, LexError> {
                     }
 
                     // unambiguous 1-char tokens
-                    ';' | '[' | ']' | '(' | ')' | '{' | '}' | ',' | ':' | '+' | '-' | '~' | '*' | '@' | '^' | '%' | '_' | '!' => {
+                    ';' | '[' | ']' | '(' | ')' | '{' | '}' | ',' | ':' | '+' | '-' | '~' | '*' | /*'@' |*/ '^' | '%' | '_' | '!' => {
                         iter.next();
                         let detail = match char {
                             ';' => TokenDetail::SemiColon, 
@@ -164,7 +164,7 @@ pub fn extract_tokens(source: String) -> Result<Vec<Token>, LexError> {
                             '-' => TokenDetail::Operator(Operator::Minus),
                             '~' => TokenDetail::Operator(Operator::Tilde),
                             '*' => TokenDetail::Operator(Operator::Asterix),
-                            '@' => TokenDetail::Operator(Operator::Arobase),
+                            // '@' => TokenDetail::Operator(Operator::Arobase),
                             '^' => TokenDetail::Operator(Operator::Caret),
                             '%' => TokenDetail::Operator(Operator::Percent),
                             '_' => TokenDetail::Operator(Operator::Underscore),

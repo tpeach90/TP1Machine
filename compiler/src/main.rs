@@ -10,6 +10,7 @@ mod parser;
 mod lexer;
 mod ir;
 mod irgen;
+mod irgen2;
 
 fn main() -> ExitCode {
 
