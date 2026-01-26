@@ -73,7 +73,6 @@ pub fn extract_tokens(source: String) -> Result<Vec<Token>, LexError> {
                             "const" => TokenDetail::Keyword(Keyword::Const),
                             "let" => TokenDetail::Keyword(Keyword::Let),
                             "byte" => TokenDetail::Keyword(Keyword::Byte),
-                            "void" => TokenDetail::Keyword(Keyword::Void),
                             "forever" => TokenDetail::Keyword(Keyword::Forever),
                             "while" => TokenDetail::Keyword(Keyword::While),
                             "do" => TokenDetail::Keyword(Keyword::Do),

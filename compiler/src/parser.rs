@@ -239,20 +239,24 @@ impl Parser <'_> {
         }
         self.advance_token();
         let type_node = self.parse_type()?;
-
         let expect_identifier = self.current_token();
         let identifier = match expect_identifier.t {
             TokenDetail::Identifier(_identifier) => Ok(_identifier),
             _ => Err(ParseError{loc: expect_identifier.loc, message: "Expected an identifier".to_string()})
         }?;
         
-        let expect_equals = self.advance_token();
-        if !matches!(expect_equals.t, TokenDetail::Equals) {
-            return Err(ParseError { loc: expect_equals.loc, message: "Expected an initial value".to_string() })
+        let lookahead = self.advance_token();
+        if matches!(lookahead.t, TokenDetail::Equals) {
+            // initial value
+            self.advance_token();
+            let initial_value = self.parse_expression()?;
+            Ok(Box::new(InnerStatementNode { loc: CodeLocation { start_index: expect_let_keyword.loc.start_index, end_index: initial_value.loc.end_index }, d: InnerStatementDetail::DeclarationStatementWithInitialValue { r#type: type_node, identifier, val: initial_value } }))
+        } else {
+            // no initial value
+            Ok(Box::new(InnerStatementNode{loc: CodeLocation { start_index: expect_let_keyword.loc.start_index, end_index: expect_identifier.loc.end_index }, d: InnerStatementDetail::DeclarationStatement { r#type: type_node, identifier }}))
         }
-        self.advance_token();
-        let initial_value = self.parse_expression()?;
-        Ok(Box::new(InnerStatementNode { loc: CodeLocation { start_index: expect_let_keyword.loc.start_index, end_index: initial_value.loc.end_index }, d: InnerStatementDetail::DeclarationStatement { r#type: type_node, identifier, val: initial_value } }))
+
+
 
     }
     fn parse_assignment_statement(&mut self) -> Result<Box<InnerStatementNode>, ParseError> {
@@ -371,20 +375,6 @@ impl Parser <'_> {
                 self.advance_token();
                 Ok(Box::new(TypeBodyNode { loc: lookahead.loc, d: TypeBodyDetail::Byte {  } }))
             },
-            TokenDetail::Keyword(Keyword::Void) => {
-                self.advance_token();
-                Ok(Box::new(TypeBodyNode { loc: lookahead.loc, d: TypeBodyDetail::Void {  } }))
-            },
-            // TokenDetail::Operator(Operator::Arobase) => {
-            //     self.advance_token();
-            //     let inner_type = self.parse_type_body()?;
-            //     Ok(Box::new(TypeBodyNode { loc: CodeLocation { start_index: lookahead.loc.start_index, end_index: inner_type.loc.end_index }, d: TypeBodyDetail::ROMPointer { t: inner_type } }))
-            // },
-            // TokenDetail::Operator(Operator::Asterix) => {
-            //     self.advance_token();
-            //     let inner_type = self.parse_type_body()?;
-            //     Ok(Box::new(TypeBodyNode { loc: CodeLocation { start_index: lookahead.loc.start_index, end_index: inner_type.loc.end_index }, d: TypeBodyDetail::RAMPointer { t: inner_type } }))
-            // },
             TokenDetail::LeftBracket => {
                 self.advance_token();
                 let size = self.parse_number()?;

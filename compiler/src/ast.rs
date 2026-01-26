@@ -1,6 +1,6 @@
 use std::{cell::RefCell, fmt::Debug, vec};
 
-use crate::{common::{BranchFlag, CodeLocation}, irgen2::Type};
+use crate::{common::{BranchFlag, CodeLocation}, irgen::Type};
 
 #[derive(Debug)]
 pub struct ProgramNode {
@@ -42,7 +42,6 @@ pub struct TypeBodyNode {
 #[derive(Debug)]
 pub enum TypeBodyDetail {
     Byte {},
-    Void {},
     // ROMPointer {t: Box <TypeBodyNode>},
     // RAMPointer {t: Box <TypeBodyNode>},
     Array {size: Box<NumberNode>, t: Box <TypeBodyNode>},
@@ -67,7 +66,8 @@ pub enum InnerStatementDetail {
     DoWhileLoop {body: Box <BlockNode>, condition: Box <ConditionNode>},
     IfStatement {condition: Box <ConditionNode>, r#true: Box <BlockNode>},
     IfElseStatement {condition: Box <ConditionNode>, r#true: Box <BlockNode>, r#false: Box <BlockNode>},
-    DeclarationStatement {r#type: Box <TypeNode>, identifier: String, val: Box <ExpressionNode>},
+    DeclarationStatement {r#type: Box<TypeNode>, identifier: String},
+    DeclarationStatementWithInitialValue {r#type: Box <TypeNode>, identifier: String, val: Box <ExpressionNode>},
     AssignmentStatement{lvalue: Box <MemoryLocationNode>, rvalue: Box <ExpressionNode>},
     ExpressionStatement {val: Box <ExpressionNode>},
     BreakStatement{},
@@ -224,9 +224,6 @@ impl std::fmt::Display for TypeBodyNode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let nfd = match &self.d {
             TypeBodyDetail::Byte {  } => NodeFormatData{children: vec![], kind:"Byte".to_string()},
-            TypeBodyDetail::Void {  } => NodeFormatData{children: vec![], kind:"Void".to_string()},
-            // TypeBodyDetail::ROMPointer { t } => NodeFormatData{children: vec![("inner".to_string(), t.to_string())], kind:"ROMPointer".to_string()},
-            // TypeBodyDetail::RAMPointer { t } => NodeFormatData{children: vec![("inner".to_string(), t.to_string())], kind:"RAMPointer".to_string()},
             TypeBodyDetail::Array { size, t } => NodeFormatData {
                 children: vec![
                     ("size".to_string(), size.to_string()),
@@ -301,13 +298,20 @@ impl std::fmt::Display for InnerStatementNode {
                 ],
                 kind: "IfElseStatement".to_string()
             },
-            InnerStatementDetail::DeclarationStatement { r#type, identifier, val } => NodeFormatData {
+            InnerStatementDetail::DeclarationStatement { r#type, identifier } => NodeFormatData {
+                children: vec![
+                    ("type".to_string(), r#type.to_string()),
+                    ("identifier".to_string(), identifier.to_string()),
+                ],
+                kind: "DeclarationStatement".to_string()
+            },
+            InnerStatementDetail::DeclarationStatementWithInitialValue { r#type, identifier, val } => NodeFormatData {
                 children: vec![
                     ("type".to_string(), r#type.to_string()),
                     ("identifier".to_string(), identifier.to_string()),
                     ("val".to_string(), val.to_string()),
                 ],
-                kind: "DeclarationStatement".to_string()
+                kind: "DeclarationStatementWithInitialValue".to_string()
             },
             InnerStatementDetail::AssignmentStatement { lvalue, rvalue } => NodeFormatData {
                 children: vec![
