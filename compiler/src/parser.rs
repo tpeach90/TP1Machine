@@ -467,7 +467,7 @@ impl Parser <'_> {
     }
 
     fn parse_primary(& mut self) -> Result<Box<ExpressionNode>, ParseError> {
-        let lookahead = self.tokens[self.offset].clone();
+        let lookahead = self.current_token();
 
         match lookahead.t {
 
@@ -484,10 +484,10 @@ impl Parser <'_> {
             
             // bracketed expression
             TokenDetail::LeftParenthesis => {
-                self.offset += 1;
+                self.advance_token();
                 let node = self.parse_expression()?;
-                if matches!(self.tokens[self.offset].t, TokenDetail::RightParenthesis) {
-                    self.offset += 1;
+                if matches!(self.current_token().t, TokenDetail::RightParenthesis) {
+                    self.advance_token();
                     Ok(node)
                 } else {
                     Err(ParseError { loc: lookahead.loc, message: format!("Missing a closing parenthesis") })
@@ -504,20 +504,11 @@ impl Parser <'_> {
                 }
             }
 
-            // // memory location
-            // TokenDetail::Operator(Operator::Arobase) |
-            // TokenDetail::Operator(Operator::Asterix) |
-            // TokenDetail::LeftBracket => {
-            //     let node = self.parse_memory_location()?;
-            //     Ok(Box::new(ExpressionNode { loc: node.loc, d: ExpressionDetail::MemoryValue { val: node } }))
-            // }
 
-            // // reference
-            // TokenDetail::Operator(Operator::Ampersand) => {
-            //     self.advance_token();
-            //     let node = self.parse_memory_location()?;
-            //     Ok(Box::new(ExpressionNode { loc: node.loc, d: ExpressionDetail::MemoryReference { val: node } }))
-            // }
+            TokenDetail::LeftBracket => {
+                let node = self.parse_memory_location()?;
+                Ok(Box::new(ExpressionNode { loc: node.loc, d: ExpressionDetail::MemoryValue { val: node }, type_annotation: RefCell::new(None) }))
+            }
 
             // array
             TokenDetail::LeftBrace => self.parse_array(),
@@ -529,7 +520,7 @@ impl Parser <'_> {
             
 
 
-            _ => Err(ParseError { loc: lookahead.loc, message: format!("Expected a number, array, unary operator, bracketed expression, memory location, or reference") })
+            _ => Err(ParseError { loc: lookahead.loc, message: format!("Expected a number, array, unary operator, bracketed expression, or memory location") })
         }
 
 
@@ -548,6 +539,7 @@ impl Parser <'_> {
         
         let lookahead = self.advance_token();
         if matches!(lookahead.t, TokenDetail::RightParenthesis) {
+            self.advance_token();
             Ok(Box::new(ExpressionNode { loc: CodeLocation { start_index: expect_identifier.loc.start_index, end_index: lookahead.loc.end_index }, d: ExpressionDetail::FunctionCall { ident, args: vec![] }, type_annotation: RefCell::new(None)}))
         } else {
             let mut args = vec![self.parse_expression()?];

@@ -7,7 +7,7 @@ main {
 
     ramWrite(screenPointer, prevTerm);
     screenPointer = screenPointer + 1;
-    ramWrite(screenPointer, nextTerm);
+    ramWrite(screenPointer, currTerm);
     screenPointer = screenPointer + 1;
 
     forever {

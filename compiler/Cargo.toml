@@ -4,5 +4,5 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-bumpalo = "3.19.1"
+argparse = "0.2.2"
 itertools = "0.14.0"

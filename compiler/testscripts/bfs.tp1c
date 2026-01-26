@@ -1,0 +1,87 @@
+let const [8]byte masks = {0b00000001, 0b00000010, 0b00000100, 0b00001000, 0b00010000, 0b00100000, 0b01000000, 0b10000000};
+let const [2][16]byte adjacencyMatrix = {
+    {0b10000000, 0b00000010},
+    {0b00000001, 0b00000100},
+    {0b00000000, 0b00001000},
+    {0b00000100, 0b00010000},
+    {0b00000000, 0b00100000},
+    {0b00001001, 0b01000000},
+    {0b00100000, 0b10000000},
+    {0b00000000, 0b00000001},
+    {0b00000000, 0b00100010},
+    {0b00000100, 0b00000000},
+    {0b00000010, 0b00001000},
+    {0b00110000, 0b00100000},
+    {0b00001000, 0b00000000},
+    {0b00001000, 0b01000000},
+    {0b00000000, 0b10000000},
+    {0b00000000, 0b00000001}
+};
+
+main {
+    let byte currentLocation = 0;
+    
+    forever {
+        wait();
+        let byte destination = input();
+
+        if (destination == currentLocation) {
+            continue;
+        };
+
+        // bfs from the destination to the start
+        // -1: unexpanded
+        // -2: in frontier
+        // 0-15: next hop
+        let [16]byte nodeStatus;
+
+        let byte i = 0;
+        while (i < len(adjacencyMatrix)) {
+            [i]nodeStatus = -1;
+            i = i + 1;
+        };
+        [destination]nodeStatus = -2;
+
+        do {
+            let byte i = 0;
+            while (i < len(adjacencyMatrix)) {
+                
+                // if in frontier
+                if ([i]nodeStatus == -2) {
+                    let byte mask = [i%8]masks;
+                    let byte maskOffset = i / 8;
+                    // for each unexpanded (non-frontier) node, check if they can reach us
+                    // if so set the next hop for that node
+                    let byte j = 0;
+                    while (j < len(adjacencyMatrix)) {
+                        if ([j]nodeStatus == -1 && mask & [maskOffset][j]adjacencyMatrix) {
+                            [j]nodeStatus = i;
+                        };
+                        j = j + 1;
+                    };
+                };
+                i = i + 1;
+            };
+
+
+        } while ([currentLocation]nodeStatus << 0);
+
+        // clear screen
+        let byte screenPtr = -8;
+        do {
+            ramWrite(screenPtr, -1);
+            screenPtr = screenPtr + 1;
+        } while flag BNC;
+
+        // output result
+        screenPtr = -8;
+        while (!(currentLocation == destination)) {
+            // next hop
+            currentLocation = [currentLocation]nodeStatus;
+            ramWrite(screenPtr, currentLocation);
+            screenPtr = screenPtr + 1;
+        };
+
+
+    };
+};

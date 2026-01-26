@@ -86,6 +86,7 @@ struct SymbolInfo {
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Type {
     // innermost byte[1] is implied.
+    // eg -> [2][16]byte is has nesting [16,2]
     nesting: Vec<usize>, 
 
 }
@@ -268,6 +269,8 @@ pub fn gen_program(node: &ProgramNode) -> Result<IntermediateRepresentation, Sem
     context.new_frame();
 
     let mut builder = IRBuilder::new();
+    let start_block = builder.new_block();
+    builder.set_insert_point_at_block_end(start_block);
 
 
     for stmt in &node.outer_statements {
@@ -411,7 +414,8 @@ fn gen_inner_statement(node: &Box<InnerStatementNode>, builder: &mut IRBuilder, 
             Ok(())
         },
         InnerStatementDetail::ExpressionStatement { val } => {
-            gen_expression_to_temporary(val, &val.get_type(context)?, builder, context)?;
+            let r#type = val.get_type(context)?;
+            gen_expression_to_temporary(val, &r#type, builder, context)?;
             Ok(())
         }
         InnerStatementDetail::BreakStatement {  } => {
@@ -555,7 +559,11 @@ fn gen_fill_from_expression(node: &Box<ExpressionNode>, dest_type: &Type, dest_p
         },
 
         ExpressionDetail::MemoryValue { val } => {
-            gen_fill_from_memory_value(val, dest, None, dest_ptr, dest_type, builder, context)?;
+            let actual_type = val.get_type(context)?;
+            if actual_type.depth() != dest_type.depth() {
+                return Err(SemanticError { loc: val.loc, message: format!("Expected a type of depth {}, got {} (depth {})", dest_type.depth(), actual_type, actual_type.depth()) });
+            }
+            gen_fill_from_memory_value(val, dest, None, dest_ptr, dest_type, 0, builder, context)?;
             Ok(())
         },
 
@@ -793,7 +801,28 @@ fn gen_expression_as_boolean(node: &Box<ExpressionNode>, block_if_true: BlockPoi
         }
         
         ExpressionDetail::EqualTo { left, right } => {
-            todo!() // needs to compare entire arrays.
+            let left_type = left.get_type(context)?;
+            let right_type = right.get_type(context)?;
+            if left_type.depth() != right_type.depth() {
+                return Err(SemanticError { loc: node.loc, message: format!("Cannot compare types of different depth. Got {} (depth {}) and {} (depth {})", left_type, left_type.depth(), right_type, right_type.depth()) });
+            }
+            if left_type != BYTE {
+                todo!() // needs to compare entire arrays.
+            }
+
+            let left_eval = gen_expression_to_temporary(left, &BYTE, builder, context)?;
+            let right_eval = gen_expression_to_temporary(right, &BYTE, builder, context)?;
+
+            builder.insert_statement(Stmt {
+                kind: StmtKind::Binary(Binary::Subtract),
+                arg1: Some(StmtArg::Variable(left_eval)),
+                arg2: Some(StmtArg::Variable(right_eval)),
+                result: None,
+                loc: node.loc
+            });
+            builder.set_branch(Some(Branch{flag: BranchFlag::BZ, to: block_if_true}));
+            builder.set_continue(Some(block_if_false));
+            Ok(())
         }
 
         ExpressionDetail::SignedGreaterThanOrEqualTo { left, right } |
@@ -852,10 +881,10 @@ fn gen_expression_as_boolean(node: &Box<ExpressionNode>, block_if_true: BlockPoi
  * pointer_for_array is the offset at which it starts writing values.
  * expected_type refers to the type of the data that is being written (not necessarily that of the entire destination variable, if there is an offset)
  */
-fn gen_fill_from_memory_value(node: &Box<MemoryLocationNode>, destination: VarID, src_offset: Option<VarID>, dest_ptr: Option<VarID>, expected_type: &Type, builder: &mut IRBuilder, context: &mut Context) -> Result<(), SemanticError> {
+fn gen_fill_from_memory_value(node: &Box<MemoryLocationNode>, destination: VarID, src_offset: Option<VarID>, dest_ptr: Option<VarID>, dest_type: &Type, source_stripped_layers: usize, builder: &mut IRBuilder, context: &mut Context) -> Result<(), SemanticError> {
     let actual_type = node.get_type(context)?;
-    if actual_type.depth() != expected_type.depth() {
-        return Err(SemanticError { loc: node.loc, message: format!("Expected a type of depth {}, got {} (depth {})", expected_type.depth(), actual_type, actual_type.depth()) });
+    if actual_type.depth() - source_stripped_layers != dest_type.depth() {
+        return Err(SemanticError { loc: node.loc, message: format!("Expected a type of depth {}, got {} (depth {})", dest_type.depth(), actual_type, actual_type.depth()) });
     }
     match &node.d {
         MemoryLocationDetail::Identifier { val } => {
@@ -876,7 +905,12 @@ fn gen_fill_from_memory_value(node: &Box<MemoryLocationNode>, destination: VarID
                         },
                         None => None
                     };
-                    gen_copy(info.id, destination, src_ptr, dest_ptr, &actual_type, expected_type, node.loc, builder, context)
+                    let type_to_copy = match actual_type.strip_layers(source_stripped_layers) {
+                        Some(t) => t,
+                        // don't think this error message is ever visible but just to be sure
+                        None => return Err(SemanticError { loc: node.loc, message: format!("Expected a type of depth {} or greater, got {} (depth {})", source_stripped_layers, actual_type, actual_type.depth()) })
+                    };
+                    gen_copy(info.id, destination, src_ptr, dest_ptr, &type_to_copy, dest_type, node.loc, builder, context)
                 }
             }
         },        
@@ -914,7 +948,9 @@ fn gen_fill_from_memory_value(node: &Box<MemoryLocationNode>, destination: VarID
                 }
             };
 
-            gen_fill_from_memory_value(arr, destination, Some(offset), dest_ptr, expected_type, builder, context)
+            // array_expected_type
+
+            gen_fill_from_memory_value(arr, destination, Some(offset), dest_ptr, dest_type, source_stripped_layers+1, builder, context)
         },
     }
 
@@ -1574,14 +1610,16 @@ impl Typeable for &Box<ExpressionNode> {
                         }
 
                         // find type that can contain all children
-                        let mut r#type = Type {
-                            nesting: vec![0;val.len()],
+                        let mut enlarged_child_type = Type {
+                            nesting: vec![0;nesting_depth],
                         };
                         for child_type in child_types {
-                            r#type = r#type.enlarged_to_fit(&child_type);
+                            enlarged_child_type = enlarged_child_type.enlarged_to_fit(&child_type);
                         }
 
-                        r#type
+                        enlarged_child_type.nesting.insert(0, val.len());
+
+                        enlarged_child_type
 
                     }
                     ExpressionDetail::FunctionCall { ident, args:_ } => {
@@ -1624,7 +1662,7 @@ impl Typeable for &Box<ExpressionNode> {
                 };
 
                 // memoize
-                *(self.type_annotation.borrow_mut()) = Some(r#type.clone());
+                // *(self.type_annotation.borrow_mut()) = Some(r#type.clone());
                 Ok(r#type)
             }
         }
@@ -1712,7 +1750,7 @@ impl Typeable for &Box<TypeBodyNode> {
                     Err(SemanticError{loc: size.loc, message: "0 size in array length".to_string()})
                 } else {
                     let mut r#type = t.get_type(context)?;
-                    r#type.nesting.insert(0, size.val as usize);
+                    r#type.nesting.push(size.val as usize);
                     Ok(r#type)
                 }
             }
@@ -1753,7 +1791,7 @@ fn flatten_constant(node: &Box<ConstantNode>) -> Vec<u8> {
 impl std::fmt::Display for Type {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut nesting_part = String::new();
-        for size in &self.nesting {
+        for size in self.nesting.iter().rev() {
             nesting_part = format!("{}[{}]", nesting_part, size)
 
         }
