@@ -15,7 +15,7 @@
                     "--bin=compiler"
                 ]
             },
-            "args": ["/home/thomas/Documents/projects/Architecture/TP1_Machine/compiler/testscripts/fib.tp1c"]
+            "args": ["/home/thomas/Documents/projects/Architecture/TP1_Machine/compiler/testscripts/bfs2.tp1c"]
         },
         {
             "name": "Debug unit tests in executable 'compiler'",

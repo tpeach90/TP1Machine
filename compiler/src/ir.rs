@@ -1,4 +1,4 @@
-use std::{collections::HashMap};
+use std::{collections::HashMap, result};
 
 
 use itertools::enumerate;
@@ -6,6 +6,7 @@ use itertools::enumerate;
 use crate::common::{BranchFlag, CodeLocation};
 
 pub type VarID = usize;
+pub type DefinitionID = usize;
 // pub type VarVersion = usize;
 pub type BlockPointer = usize;
 
@@ -101,6 +102,13 @@ pub struct Stmt {
     pub arg1: Option<StmtArg>,
     pub arg2: Option<StmtArg>,
     pub result: Option<VarID>,
+    pub definition_id: DefinitionID
+}
+
+impl Stmt {
+    pub fn new(kind:StmtKind, arg1: Option<StmtArg>, arg2: Option<StmtArg>, result: Option<VarID>, loc: CodeLocation) -> Stmt{
+        Stmt { loc, kind, arg1, arg2, result, definition_id: 0}
+    }
 }
 
 pub enum StmtKind {

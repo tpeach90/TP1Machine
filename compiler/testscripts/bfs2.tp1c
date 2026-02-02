@@ -1,0 +1,103 @@
+let const [8]byte masks = {0b00000001, 0b00000010, 0b00000100, 0b00001000, 0b00010000, 0b00100000, 0b01000000, 0b10000000};
+let const [2][16]byte adjacencyMatrix = {
+    {0b00000010, 0b10000000},
+    {0b00000100, 0b00000001},
+    {0b00001000, 0b00000000},
+    {0b00010000, 0b00000100},
+    {0b00100000, 0b00000000},
+    {0b01000000, 0b00001001},
+    {0b10000000, 0b00100000},
+    {0b00000001, 0b00000000},
+    {0b00100010, 0b00000000},
+    {0b00000000, 0b00000100},
+    {0b00001000, 0b00000010},
+    {0b00100000, 0b00110000},
+    {0b00000000, 0b00001000},
+    {0b01000000, 0b00001000},
+    {0b10000000, 0b00000000},
+    {0b00000001, 0b00000000}
+};
+
+main {
+    let byte currentLocation = 0;
+
+    forever {
+        wait();
+        let byte destination = input();
+
+        if (destination == currentLocation || destination > 15) {
+            continue;
+        };
+
+        // 1st byte - LSB=node 0
+        // 2nd byte - LSB=node 8
+        let [2]byte encounteredSet = {0, 0};
+        let [16]byte nextHop;
+        
+        // add destination to encounteredSet
+        [destination/8]encounteredSet = [destination%8]masks;
+
+        // while current location not encountered
+        while (([currentLocation/8]encounteredSet & [currentLocation%8]masks) == 0) {
+
+            let [2]byte addToEncounteredSet = {0b00000000, 0b00000000};
+
+            // check if any unencountered node can reach an encountered node
+            let byte i = 0;
+            while (i <= 15) {
+                // ignore if node is already encountered
+                if ([i/8]encounteredSet & [i%8]masks) {
+                    i = i + 1;
+                    continue;
+                };
+
+                // bit string - encountered nodes that node i can reach
+                let [2]byte canReach = {
+                    [0][i]adjacencyMatrix & [0]encounteredSet,
+                    [1][i]adjacencyMatrix & [1]encounteredSet
+                };
+
+                if ([0]canReach) {
+                    // i can reach some node 0..=7
+                    [i]nextHop = _[0]canReach;
+                } else if ([1]canReach) {
+                    // i can reach some node 8..=15
+                    [i]nextHop = _[1]canReach + 8;
+                } else {
+                    // i cannot reach any currently encountered node
+                    i = i + 1;
+                    continue;
+                };
+
+                // this node is now encountered
+                [i/8]addToEncounteredSet = [i/8]addToEncounteredSet | [i%8]masks;
+
+                i = i + 1;
+            };
+
+            encounteredSet = {
+                [0]encounteredSet | [0]addToEncounteredSet,
+                [1]encounteredSet | [1]addToEncounteredSet
+            };
+
+        };
+
+
+        let byte screenPtr = -8;
+        while (!(currentLocation == destination)) {
+            currentLocation = [currentLocation]nextHop;
+            ramWrite(screenPtr, currentLocation);
+            screenPtr = screenPtr + 1;
+        };
+
+        // clear rest of screen
+        while (screenPtr << 0) {
+            ramWrite(screenPtr, -1);
+            screenPtr = screenPtr + 1;
+        };
+
+        updateScreen();
+
+
+    };
+};

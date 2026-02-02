@@ -62,8 +62,6 @@ main {
                 };
                 i = i + 1;
             };
-
-
         } while ([currentLocation]nodeStatus << 0);
 
         // clear screen

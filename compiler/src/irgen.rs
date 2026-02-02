@@ -5,7 +5,7 @@ use std::{cmp::min, collections::HashMap, iter::zip, ptr, vec};
 
 use itertools::enumerate;
 
-use crate::{ast::*, common::{BranchFlag, CodeLocation}, ir::{BasicBlock, Binary, BlockPointer, Branch, IntermediateRepresentation, Nullary, Stmt, StmtArg, StmtKind, Unary, VarID}};
+use crate::{ast::*, common::{BranchFlag, CodeLocation}, ir::{BasicBlock, Binary, BlockPointer, Branch, DefinitionID, IntermediateRepresentation, Nullary, Stmt, StmtArg, StmtKind, Unary, VarID}};
 
 pub struct SemanticError {
     pub loc: CodeLocation,
@@ -145,15 +145,14 @@ struct IRBuilder {
     pub ir: IntermediateRepresentation,
     curr_block: BlockPointer,
     insert_line: usize,
-    id_counter: VarID,
+    var_id_counter: VarID,
+    definition_id_counter: DefinitionID,
 }
 
 
 impl IRBuilder {
     fn new() -> IRBuilder {
-        let mut ir = IntermediateRepresentation::new();
-        ir.basic_blocks.push(BasicBlock::new());
-        IRBuilder { ir: IntermediateRepresentation::new(), curr_block: 0, insert_line: 0, id_counter: 0 }
+        IRBuilder { ir: IntermediateRepresentation::new(), curr_block: 0, insert_line: 0, var_id_counter: 0, definition_id_counter: 0}
     }
 
     fn new_block(&mut self) -> BlockPointer {
@@ -171,7 +170,12 @@ impl IRBuilder {
         self.set_insert_point(block_ptr, insert_line);
     }
 
-    fn insert_statement(&mut self, statement: Stmt) {
+    fn insert_statement(&mut self, mut statement: Stmt) {
+
+        // add definition annotation
+        statement.definition_id = self.definition_id_counter;
+        self.definition_id_counter += 1;
+
         self.ir.basic_blocks[self.curr_block].statements.insert(self.insert_line, statement);
         self.insert_line += 1;
     }
@@ -185,8 +189,8 @@ impl IRBuilder {
     }
 
     fn add_global_constant(&mut self, ident: &str, value: Vec<u8>) -> VarID {
-        let id = self.id_counter;
-        self.id_counter += 1;
+        let id = self.var_id_counter;
+        self.var_id_counter += 1;
         self.ir.id_to_ident.insert(id, ident.to_owned());
         self.ir.global_constants.insert(id, value);
         return id;
@@ -199,8 +203,8 @@ impl IRBuilder {
     }
 
     fn new_nameless_variable(&mut self, size: usize) -> VarID {
-        let id = self.id_counter;
-        self.id_counter += 1;
+        let id = self.var_id_counter;
+        self.var_id_counter += 1;
         self.ir.id_to_size.insert(id, size);
         return id;
     }
@@ -398,14 +402,14 @@ fn gen_inner_statement(node: &Box<InnerStatementNode>, builder: &mut IRBuilder, 
             let (var_id, offset, r#type) = gen_get_memory_variable_offset_and_type(lvalue, builder, context)?;
             let dest_ptr = match offset {
                 Some(offset) => {
-                    builder.insert_statement(Stmt{
+                    builder.insert_statement(Stmt::new(
                         // offset += location of destination variable
-                        kind: StmtKind::Binary(Binary::Add),
-                        arg1: Some(StmtArg::Variable(offset)),
-                        arg2: Some(StmtArg::LocationOfVariable(var_id)),
-                        result: Some(offset),
-                        loc: lvalue.loc
-                    });
+                        StmtKind::Binary(Binary::Add),
+                        Some(StmtArg::Variable(offset)),
+                        Some(StmtArg::LocationOfVariable(var_id)),
+                        Some(offset),
+                        lvalue.loc
+                    ));
                     Some(offset)
                 },
                 None => None,
@@ -484,14 +488,14 @@ fn gen_fill_from_expression(node: &Box<ExpressionNode>, dest_type: &Type, dest_p
                     None
                 } else {
                     let ptr = builder.new_nameless_variable(1);
-                    builder.insert_statement(Stmt {
+                    builder.insert_statement(Stmt::new(
                         // ptr = loc of dest
-                        kind: StmtKind::Unary(Unary::Copy),
-                        arg1: Some(StmtArg::LocationOfVariable(dest)),
-                        arg2: None,
-                        result: Some(ptr),
-                        loc: node.loc
-                    });
+                        StmtKind::Unary(Unary::Copy),
+                        Some(StmtArg::LocationOfVariable(dest)),
+                        None,
+                        Some(ptr),
+                        node.loc
+                    ));
                     Some(ptr)
                 }
             };
@@ -505,14 +509,14 @@ fn gen_fill_from_expression(node: &Box<ExpressionNode>, dest_type: &Type, dest_p
                     gen_fill_from_expression(child, &dest_inner_type, ptr, dest, builder, context)?;
                     match ptr {
                         None => (),
-                        Some(ptr) => builder.insert_statement(Stmt{
+                        Some(ptr) => builder.insert_statement(Stmt::new(
                             // ptr++
-                            kind: StmtKind::Unary(Unary::Increment),
-                            arg1: Some(StmtArg::Variable(ptr)),
-                            arg2: None,
-                            result: Some(ptr),
-                            loc: child.loc
-                        }),
+                            StmtKind::Unary(Unary::Increment),
+                            Some(StmtArg::Variable(ptr)),
+                            None,
+                            Some(ptr),
+                            child.loc
+                        )),
                     }
                 }
             } else {
@@ -525,28 +529,28 @@ fn gen_fill_from_expression(node: &Box<ExpressionNode>, dest_type: &Type, dest_p
                         if i < children.len() - 1 {
                             match ptr {
                                 None => (),
-                                Some(ptr) => builder.insert_statement(Stmt{
+                                Some(ptr) => builder.insert_statement(Stmt::new(
                                     // ptr++
-                                    kind: StmtKind::Unary(Unary::Increment),
-                                    arg1: Some(StmtArg::Variable(ptr)),
-                                    arg2: None,
-                                    result: Some(ptr),
-                                    loc: child.loc
-                                }),
+                                    StmtKind::Unary(Unary::Increment),
+                                    Some(StmtArg::Variable(ptr)),
+                                    None,
+                                    Some(ptr),
+                                    child.loc
+                                )),
                             }
                         }
                     }
                     let pointer_increase_amount = (dest_type.nesting.first().unwrap() - children.len()) * dest_inner_type.size() + 1;
                     match ptr {
                         None => (),
-                        Some(ptr) => builder.insert_statement(Stmt{
+                        Some(ptr) => builder.insert_statement(Stmt::new(
                             // ptr += pointer_increase_amount
-                            kind: StmtKind::Binary(Binary::Add),
-                            arg1: Some(StmtArg::Variable(ptr)),
-                            arg2: Some(StmtArg::Literal(pointer_increase_amount as u8)),
-                            result: Some(ptr),
-                            loc: node.loc
-                        }),
+                            StmtKind::Binary(Binary::Add),
+                            Some(StmtArg::Variable(ptr)),
+                            Some(StmtArg::Literal(pointer_increase_amount as u8)),
+                            Some(ptr),
+                            node.loc
+                        )),
                     }
                 }
             }
@@ -600,24 +604,24 @@ fn gen_fill_from_expression(node: &Box<ExpressionNode>, dest_type: &Type, dest_p
             let t = gen_expression_to_temporary(node, &BYTE, builder, context)?;
             match dest_ptr {
                 Some(ptr) => {
-                    builder.insert_statement(Stmt {
+                    builder.insert_statement(Stmt::new(
                         // [ptr] = t
-                        loc: node.loc,
-                        kind: StmtKind::Binary(Binary::RAMWrite),
-                        arg1: Some(StmtArg::Variable(ptr)),
-                        arg2: Some(StmtArg::Variable(t)),
-                        result: Some(dest)
-                    });
+                        StmtKind::Binary(Binary::RAMWrite),
+                        Some(StmtArg::Variable(ptr)),
+                        Some(StmtArg::Variable(t)),
+                        Some(dest),
+                        node.loc,
+                    ));
                 },
                 None => {
-                    builder.insert_statement(Stmt{
+                    builder.insert_statement(Stmt::new(
                         // dest = t
-                        kind: StmtKind::Unary(Unary::Copy),
-                        arg1: Some(StmtArg::Variable(t)),
-                        arg2: None,
-                        result: Some(dest),
-                        loc: node.loc
-                    });
+                        StmtKind::Unary(Unary::Copy),
+                        Some(StmtArg::Variable(t)),
+                        None,
+                        Some(dest),
+                        node.loc
+                    ));
                 }
             }
             Ok(())
@@ -630,13 +634,13 @@ fn gen_expression_to_temporary(node: &Box<ExpressionNode>, expected_type: &Type,
         ExpressionDetail::Number { val } => {
             exact_type_check(node.loc, expected_type, &BYTE)?;
             let out = builder.new_nameless_variable(1);
-            builder.insert_statement(Stmt{
-                kind: StmtKind::Unary(Unary::Copy),
-                arg1: Some(StmtArg::Literal(val.val)),
-                arg2: None,
-                loc: node.loc,
-                result: Some(out),
-            });
+            builder.insert_statement(Stmt::new(
+                StmtKind::Unary(Unary::Copy),
+                Some(StmtArg::Literal(val.val)),
+                None,
+                Some(out),
+                node.loc,
+            ));
             Ok(out)
         },
         ExpressionDetail::Array { val:_ } => {
@@ -706,24 +710,24 @@ fn gen_expression_to_temporary(node: &Box<ExpressionNode>, expected_type: &Type,
             let result = builder.new_nameless_variable(1);
             gen_expression_as_boolean(node, block_if_true, block_if_false, builder, context)?;
             builder.set_insert_point_at_block_end(block_if_true);
-            builder.insert_statement(Stmt{
+            builder.insert_statement(Stmt::new(
                 // result = 1
-                kind: StmtKind::Unary(Unary::Copy),
-                arg1: Some(StmtArg::Literal(1)),
-                arg2: None,
-                result: Some(result),
-                loc: node.loc
-            });
+                StmtKind::Unary(Unary::Copy),
+                Some(StmtArg::Literal(1)),
+                None,
+                Some(result),
+                node.loc
+            ));
             builder.set_continue(Some(block_after));
             builder.set_insert_point_at_block_end(block_if_false);
-            builder.insert_statement(Stmt{
+            builder.insert_statement(Stmt::new(
                 // result = 0
-                kind: StmtKind::Unary(Unary::Copy),
-                arg1: Some(StmtArg::Literal(0)),
-                arg2: None,
-                result: Some(result),
-                loc: node.loc
-            });
+                StmtKind::Unary(Unary::Copy),
+                Some(StmtArg::Literal(0)),
+                None,
+                Some(result),
+                node.loc
+            ));
             builder.set_continue(Some(block_after));
             builder.set_insert_point_at_block_end(block_after);
             Ok(result)
@@ -735,13 +739,13 @@ fn gen_apply_unary(node: &Box<ExpressionNode>, loc: CodeLocation, op: Unary, exp
     exact_type_check(loc, expected_type, &BYTE)?;
     let inner_result = gen_expression_to_temporary(node, &BYTE, builder, context)?;
     let out = builder.new_nameless_variable(1);
-    builder.insert_statement(Stmt{
-        kind: StmtKind::Unary(op),
-        arg1: Some(StmtArg::Variable(inner_result)),
-        arg2: None,
-        loc: loc,
-        result: Some(out),
-    });
+    builder.insert_statement(Stmt::new(
+        StmtKind::Unary(op),
+        Some(StmtArg::Variable(inner_result)),
+        None,
+        Some(out),
+        loc,
+    ));
     Ok(out)
 }
 
@@ -750,13 +754,13 @@ fn gen_apply_binary(left: &Box<ExpressionNode>, right: &Box<ExpressionNode>, loc
     let left_result = gen_expression_to_temporary(left, &BYTE, builder, context)?;
     let right_result = gen_expression_to_temporary(right, &BYTE, builder, context)?;
     let out = builder.new_nameless_variable(1);
-    builder.insert_statement(Stmt{
-        kind: StmtKind::Binary(op),
-        arg1: Some(StmtArg::Variable(left_result)),
-        arg2: Some(StmtArg::Variable(right_result)),
-        loc: loc,
-        result: Some(out),
-    });
+    builder.insert_statement(Stmt::new(
+        StmtKind::Binary(op),
+        Some(StmtArg::Variable(left_result)),
+        Some(StmtArg::Variable(right_result)),
+        Some(out),
+        loc,
+    ));
     Ok(out)
 }
 
@@ -787,14 +791,14 @@ fn gen_expression_as_boolean(node: &Box<ExpressionNode>, block_if_true: BlockPoi
         ExpressionDetail::BitwiseOR { left:_, right:_ } => {
             // test if result is equal to zero
             let result = gen_expression_to_temporary(node, &BYTE, builder, context)?;
-            builder.insert_statement(Stmt{
+            builder.insert_statement(Stmt::new(
                 // do nothing with result - just set ALU flags.
-                kind: StmtKind::Unary(Unary::Copy),
-                arg1: Some(StmtArg::Variable(result)),
-                arg2: None,
-                result: None,
-                loc: node.loc
-            });
+                StmtKind::Unary(Unary::Copy),
+                Some(StmtArg::Variable(result)),
+                None,
+                None,
+                node.loc
+            ));
             builder.set_branch(Some(Branch { flag: BranchFlag::BNZ, to: block_if_true }));
             builder.set_continue(Some(block_if_false));
             Ok(())
@@ -813,13 +817,13 @@ fn gen_expression_as_boolean(node: &Box<ExpressionNode>, block_if_true: BlockPoi
             let left_eval = gen_expression_to_temporary(left, &BYTE, builder, context)?;
             let right_eval = gen_expression_to_temporary(right, &BYTE, builder, context)?;
 
-            builder.insert_statement(Stmt {
-                kind: StmtKind::Binary(Binary::Subtract),
-                arg1: Some(StmtArg::Variable(left_eval)),
-                arg2: Some(StmtArg::Variable(right_eval)),
-                result: None,
-                loc: node.loc
-            });
+            builder.insert_statement(Stmt::new(
+                StmtKind::Binary(Binary::Subtract),
+                Some(StmtArg::Variable(left_eval)),
+                Some(StmtArg::Variable(right_eval)),
+                None,
+                node.loc
+            ));
             builder.set_branch(Some(Branch{flag: BranchFlag::BZ, to: block_if_true}));
             builder.set_continue(Some(block_if_false));
             Ok(())
@@ -846,13 +850,13 @@ fn gen_expression_as_boolean(node: &Box<ExpressionNode>, block_if_true: BlockPoi
                 ExpressionDetail::UnsignedGreaterThan { left:_, right:_ } => (false, BranchFlag::BNC),
                 _ => panic!()
             };
-            builder.insert_statement(Stmt {
-                kind: StmtKind::Binary(Binary::Subtract),
-                arg1: Some(StmtArg::Variable(if do_l_minus_r {left_eval} else {right_eval})),
-                arg2: Some(StmtArg::Variable(if do_l_minus_r {right_eval} else {left_eval})),
-                result: None,
-                loc: node.loc
-            });
+            builder.insert_statement(Stmt::new(
+                StmtKind::Binary(Binary::Subtract),
+                Some(StmtArg::Variable(if do_l_minus_r {left_eval} else {right_eval})),
+                Some(StmtArg::Variable(if do_l_minus_r {right_eval} else {left_eval})),
+                None,
+                node.loc
+            ));
             builder.set_branch(Some(Branch { flag: flag_if_true, to: block_if_true }));
             builder.set_continue(Some(block_if_false));
             Ok(())
@@ -893,14 +897,14 @@ fn gen_fill_from_memory_value(node: &Box<MemoryLocationNode>, destination: VarID
                 Some(info) => {
                     let src_ptr = match src_offset {
                         Some(offset) => {
-                            builder.insert_statement(Stmt{
+                            builder.insert_statement(Stmt::new(
                                 // offset += start of source array
-                                kind: StmtKind::Binary(Binary::Add),
-                                arg1: Some(StmtArg::Variable(offset)),
-                                arg2: Some(StmtArg::LocationOfVariable(info.id)),
-                                result: Some(offset),
-                                loc: node.loc
-                            });
+                                StmtKind::Binary(Binary::Add),
+                                Some(StmtArg::Variable(offset)),
+                                Some(StmtArg::LocationOfVariable(info.id)),
+                                Some(offset),
+                                node.loc
+                            ));
                             Some(offset)
                         },
                         None => None
@@ -923,24 +927,24 @@ fn gen_fill_from_memory_value(node: &Box<MemoryLocationNode>, destination: VarID
             // meaning it was already deemed valid to index into arr
             let inner_type = arr.get_type(context)?.inner().unwrap();
             let offset_from_this_layer = gen_expression_to_temporary(i, &BYTE, builder, context)?;
-            builder.insert_statement(Stmt{
+            builder.insert_statement(Stmt::new(
                 // offset_from_this_layer *= inner_type.size()
-                kind: StmtKind::Binary(Binary::Multiply),
-                arg1: Some(StmtArg::Variable(offset_from_this_layer)),
-                arg2: Some(StmtArg::Literal(inner_type.size() as u8)),
-                result: Some(offset_from_this_layer),
-                loc: node.loc
-            });
+                StmtKind::Binary(Binary::Multiply),
+                Some(StmtArg::Variable(offset_from_this_layer)),
+                Some(StmtArg::Literal(inner_type.size() as u8)),
+                Some(offset_from_this_layer),
+                node.loc
+            ));
             let offset = match src_offset {
                 Some(offset) => {
-                    builder.insert_statement(Stmt{
+                    builder.insert_statement(Stmt::new(
                         // offset += offset_from_this_layer
-                        kind: StmtKind::Binary(Binary::Add),
-                        arg1: Some(StmtArg::Variable(offset)),
-                        arg2: Some(StmtArg::Variable(offset_from_this_layer)),
-                        result: Some(offset),
-                        loc: node.loc
-                    });
+                        StmtKind::Binary(Binary::Add),
+                        Some(StmtArg::Variable(offset)),
+                        Some(StmtArg::Variable(offset_from_this_layer)),
+                        Some(offset),
+                        node.loc
+                    ));
                     offset
                 },
                 None => {
@@ -964,8 +968,22 @@ fn gen_get_memory_value(node: &Box<MemoryLocationNode>, expected_type: &Type, bu
         return Err(SemanticError { loc: node.loc, message: format!("Expected a type of depth {}, got {} (depth {})", expected_type.depth(), actual_type, actual_type.depth()) });
     }
     let (source, offset, r#type) = gen_get_memory_variable_offset_and_type(node, builder, context)?;
+    // if has an offset, add the start of the array bound
+    let source_ptr = match offset {
+        Some(offset) => {
+            builder.insert_statement(Stmt::new(
+                StmtKind::Binary(Binary::Add),
+                Some(StmtArg::Variable(offset)),
+                Some(StmtArg::LocationOfVariable(source)),
+                Some(offset),
+                node.loc
+            ));
+            Some(offset)
+        }
+        None => None
+    };
     let dest = builder.new_nameless_variable(expected_type.size());
-    gen_copy(source, dest, offset, None, &r#type, expected_type, node.loc, builder, context)?;
+    gen_copy(source, dest, source_ptr, None, &r#type, expected_type, node.loc, builder, context)?;
     Ok(dest)
 }
 
@@ -984,24 +1002,24 @@ fn gen_get_memory_variable_offset_and_type(node: &Box<MemoryLocationNode>, build
                 None => return Err(SemanticError { loc: node.loc, message: "Cannot index into byte".to_string() })
             };
             let i_eval = gen_expression_to_temporary(i, &BYTE, builder, context)?;
-            builder.insert_statement(Stmt{
+            builder.insert_statement(Stmt::new(
                 // i *= inner_type.size()
-                kind: StmtKind::Binary(Binary::Multiply),
-                arg1: Some(StmtArg::Variable(i_eval)),
-                arg2: Some(StmtArg::Literal(inner_type.size() as u8)),
-                result: Some(i_eval),
-                loc: node.loc
-            });
+                StmtKind::Binary(Binary::Multiply),
+                Some(StmtArg::Variable(i_eval)),
+                Some(StmtArg::Literal(inner_type.size() as u8)),
+                Some(i_eval),
+                node.loc
+            ));
             let offset = match maybe_offset {
                 Some(offset) => {
-                    builder.insert_statement(Stmt {
+                    builder.insert_statement(Stmt::new(
                         // offset += i
-                        kind: StmtKind::Binary(Binary::Add),
-                        arg1: Some(StmtArg::Variable(offset)),
-                        arg2: Some(StmtArg::Variable(i_eval)),
-                        result: Some(offset),
-                        loc: node.loc
-                    });
+                        StmtKind::Binary(Binary::Add),
+                        Some(StmtArg::Variable(offset)),
+                        Some(StmtArg::Variable(i_eval)),
+                        Some(offset),
+                        node.loc
+                    ));
                     offset
                 },
                 None => {
@@ -1019,24 +1037,24 @@ fn gen_get_memory_variable_offset_and_type(node: &Box<MemoryLocationNode>, build
                 None => return Err(SemanticError { loc: node.loc, message: "Cannot slice byte".to_string() })
             };
             let start_eval = gen_expression_to_temporary(start, &BYTE, builder, context)?;
-            builder.insert_statement(Stmt{
+            builder.insert_statement(Stmt::new(
                 // start *= inner_type.size()
-                kind: StmtKind::Binary(Binary::Multiply),
-                arg1: Some(StmtArg::Variable(start_eval)),
-                arg2: Some(StmtArg::Literal(inner_type.size() as u8)),
-                result: Some(start_eval),
-                loc: node.loc
-            });
+                StmtKind::Binary(Binary::Multiply),
+                Some(StmtArg::Variable(start_eval)),
+                Some(StmtArg::Literal(inner_type.size() as u8)),
+                Some(start_eval),
+                node.loc
+            ));
             let offset = match maybe_offset {
                 Some(offset) => {
-                    builder.insert_statement(Stmt {
+                    builder.insert_statement(Stmt::new(
                         // offset += start
-                        kind: StmtKind::Binary(Binary::Add),
-                        arg1: Some(StmtArg::Variable(offset)),
-                        arg2: Some(StmtArg::Variable(start_eval)),
-                        result: Some(offset),
-                        loc: node.loc
-                    });
+                        StmtKind::Binary(Binary::Add),
+                        Some(StmtArg::Variable(offset)),
+                        Some(StmtArg::Variable(start_eval)),
+                        Some(offset),
+                        node.loc
+                    ));
                     offset
                 },
                 None => {
@@ -1058,43 +1076,43 @@ fn gen_copy(source: VarID, dest:VarID, source_ptr: Option<VarID>, dest_ptr: Opti
         }
         match (source_ptr, dest_ptr) {
             (None, None) => {
-                builder.insert_statement(Stmt{
-                    kind: StmtKind::Unary(Unary::Copy),
-                    arg1: Some(StmtArg::Variable(source)),
-                    arg2: None,
-                    result: Some(dest),
+                builder.insert_statement(Stmt::new(
+                    StmtKind::Unary(Unary::Copy),
+                    Some(StmtArg::Variable(source)),
+                    None,
+                    Some(dest),
                     loc
-                });
+                ));
                 Ok(())
             },
             (None, Some(d_ptr)) => {
-                builder.insert_statement(Stmt{
-                    kind: StmtKind::Binary(Binary::RAMWrite),
-                    arg1: Some(StmtArg::Variable(d_ptr)),
-                    arg2: Some(StmtArg::Variable(source)),
-                    result: Some(dest),
+                builder.insert_statement(Stmt::new(
+                    StmtKind::Binary(Binary::RAMWrite),
+                    Some(StmtArg::Variable(d_ptr)),
+                    Some(StmtArg::Variable(source)),
+                    Some(dest),
                     loc
-                });
+                ));
                 Ok(())
             },
             (Some(s_ptr), None) => {
-                builder.insert_statement(Stmt{
-                    kind: StmtKind::Unary(Unary::Copy),
-                    arg1: Some(StmtArg::RAMPointer(s_ptr, source)),
-                    arg2: None,
-                    result: Some(dest),
+                builder.insert_statement(Stmt::new(
+                    StmtKind::Unary(Unary::Copy),
+                    Some(StmtArg::RAMPointer(s_ptr, source)),
+                    None,
+                    Some(dest),
                     loc
-                });
+                ));
                 Ok(())
             },
             (Some(s_ptr), Some(d_ptr)) => {
-                builder.insert_statement(Stmt{
-                    kind: StmtKind::Binary(Binary::RAMWrite),
-                    arg1: Some(StmtArg::Variable(d_ptr)),
-                    arg2: Some(StmtArg::RAMPointer(s_ptr, source)),
-                    result: Some(dest),
+                builder.insert_statement(Stmt::new(
+                    StmtKind::Binary(Binary::RAMWrite),
+                    Some(StmtArg::Variable(d_ptr)),
+                    Some(StmtArg::RAMPointer(s_ptr, source)),
+                    Some(dest),
                     loc
-                });
+                ));
                 Ok(())
             }
         }
@@ -1107,24 +1125,24 @@ fn gen_copy(source: VarID, dest:VarID, source_ptr: Option<VarID>, dest_ptr: Opti
             },
             (None, Some(d_ptr)) => {
                 let s_ptr = builder.new_nameless_variable(1);
-                builder.insert_statement(Stmt{
-                    kind: StmtKind::Unary(Unary::Copy),
-                    arg1: Some(StmtArg::LocationOfVariable(source)),
-                    arg2: None,
-                    result: Some(s_ptr),
+                builder.insert_statement(Stmt::new(
+                    StmtKind::Unary(Unary::Copy),
+                    Some(StmtArg::LocationOfVariable(source)),
+                    None,
+                    Some(s_ptr),
                     loc
-                });
+                ));
                 gen_copy_array_with_pointer_offsets(source, dest, s_ptr, d_ptr, source_type, dest_type, loc, builder, context)
             }
             (Some(s_ptr), None) => {
                 let d_ptr = builder.new_nameless_variable(1);
-                builder.insert_statement(Stmt{
-                    kind: StmtKind::Unary(Unary::Copy),
-                    arg1: Some(StmtArg::LocationOfVariable(dest)),
-                    arg2: None,
-                    result: Some(d_ptr),
+                builder.insert_statement(Stmt::new(
+                    StmtKind::Unary(Unary::Copy),
+                    Some(StmtArg::LocationOfVariable(dest)),
+                    None,
+                    Some(d_ptr),
                     loc
-                });
+                ));
                 gen_copy_array_with_pointer_offsets(source, dest, s_ptr, d_ptr, source_type, dest_type, loc, builder, context)
             },
             (Some(s_ptr), Some(d_ptr)) => {
@@ -1139,34 +1157,34 @@ fn gen_copy(source: VarID, dest:VarID, source_ptr: Option<VarID>, dest_ptr: Opti
 fn gen_copy_array(source: VarID, dest: VarID, source_type: &Type, dest_type: &Type, loc: CodeLocation, builder: &mut IRBuilder, context: &mut Context) -> Result<(), SemanticError> {
     if source_type.depth() == 0 && dest_type.depth() == 0 {
         // byte
-        builder.insert_statement(Stmt {
-            kind: StmtKind::Unary(Unary::Copy),
-            arg1: Some(StmtArg::Variable(source)),
-            arg2: None,
-            result: Some(dest),
+        builder.insert_statement(Stmt::new(
+            StmtKind::Unary(Unary::Copy),
+            Some(StmtArg::Variable(source)),
+            None,
+            Some(dest),
             loc
-        });
+        ));
         Ok(())
     } else {
         // array copy
         let source_ptr = builder.new_nameless_variable(1);
         let dest_ptr = builder.new_nameless_variable(1);
-        builder.insert_statement(Stmt {
+        builder.insert_statement(Stmt::new(
             // src_ptr = start of source array
-            kind: StmtKind::Unary(Unary::Copy),
-            arg1: Some(StmtArg::LocationOfVariable(source)),
-            arg2: None,
-            result: Some(source_ptr),
-            loc: loc
-        });
-        builder.insert_statement(Stmt {
+            StmtKind::Unary(Unary::Copy),
+            Some(StmtArg::LocationOfVariable(source)),
+            None,
+            Some(source_ptr),
+            loc
+        ));
+        builder.insert_statement(Stmt::new(
             // dest_ptr = start of dest array
-            kind: StmtKind::Unary(Unary::Copy),
-            arg1: Some(StmtArg::LocationOfVariable(dest)),
-            arg2: None,
-            result: Some(dest_ptr),
-            loc: loc
-        });
+            StmtKind::Unary(Unary::Copy),
+            Some(StmtArg::LocationOfVariable(dest)),
+            None,
+            Some(dest_ptr),
+            loc
+        ));
         gen_copy_array_with_pointer_offsets(source, dest, source_ptr, dest_ptr, source_type, dest_type, loc, builder, context)?;
         Ok(())
     }
@@ -1228,38 +1246,38 @@ fn gen_copy_array_with_pointer_offsets_2(source: VarID, dest: VarID, source_ptr:
     if dest_type.depth() == 0 {
         // trivial copy
         let t = builder.new_nameless_variable(1);
-        builder.insert_statement(Stmt {
+        builder.insert_statement(Stmt::new(
             // copy from source to temporary
-            kind: StmtKind::Unary(Unary::Copy),
-            arg1: Some(StmtArg::RAMPointer(source_ptr, source)),
-            arg2: None,
-            result: Some(t),
+            StmtKind::Unary(Unary::Copy),
+            Some(StmtArg::RAMPointer(source_ptr, source)),
+            None,
+            Some(t),
             loc
-        });
-        builder.insert_statement(Stmt {
+        ));
+        builder.insert_statement(Stmt::new(
             // copy from temporary to destination
-            kind: StmtKind::Binary(Binary::RAMWrite),
-            arg1: Some(StmtArg::Variable(dest_ptr)),
-            arg2: Some(StmtArg::Variable(t)),
-            result: Some(dest),
+            StmtKind::Binary(Binary::RAMWrite),
+            Some(StmtArg::Variable(dest_ptr)),
+            Some(StmtArg::Variable(t)),
+            Some(dest),
             loc
-        });
-        builder.insert_statement(Stmt{
+        ));
+        builder.insert_statement(Stmt::new(
             // increment source_ptr
-            kind: StmtKind::Unary(Unary::Increment),
-            arg1: Some(StmtArg::Variable(source_ptr)),
-            arg2: None,
-            result: Some(source_ptr),
+            StmtKind::Unary(Unary::Increment),
+            Some(StmtArg::Variable(source_ptr)),
+            None,
+            Some(source_ptr),
             loc
-        });
-        builder.insert_statement(Stmt{
+        ));
+        builder.insert_statement(Stmt::new(
             // increment dest_ptr
-            kind: StmtKind::Unary(Unary::Increment),
-            arg1: Some(StmtArg::Variable(dest_ptr)),
-            arg2: None,
-            result: Some(dest_ptr),
+            StmtKind::Unary(Unary::Increment),
+            Some(StmtArg::Variable(dest_ptr)),
+            None,
+            Some(dest_ptr),
             loc
-        });
+        ));
         return Ok(())
     }
 
@@ -1284,24 +1302,24 @@ fn gen_copy_array_with_pointer_offsets_2(source: VarID, dest: VarID, source_ptr:
                 let increase_source_ptr_by = source_type.inner().unwrap().size() * (source_type.nesting[0] - els_in_outermost);
                 let increase_dest_ptr_by = dest_type.inner().unwrap().size() * (dest_type.nesting[0] - els_in_outermost);
                 if increase_source_ptr_by > 0 {
-                    builder.insert_statement(Stmt {
+                    builder.insert_statement(Stmt::new(
                         // source_ptr += increase_source_ptr_by
-                        kind: StmtKind::Binary(Binary::Add),
-                        arg1: Some(StmtArg::Variable(source_ptr)),
-                        arg2: Some(StmtArg::Literal(increase_source_ptr_by as u8)),
-                        result: Some(source_ptr),
+                        StmtKind::Binary(Binary::Add),
+                        Some(StmtArg::Variable(source_ptr)),
+                        Some(StmtArg::Literal(increase_source_ptr_by as u8)),
+                        Some(source_ptr),
                         loc
-                    });
+                    ));
                 }
                 if increase_dest_ptr_by > 0 {
-                    builder.insert_statement(Stmt {
+                    builder.insert_statement(Stmt::new(
                         // dest_ptr += increase_dest_ptr_by
-                        kind: StmtKind::Binary(Binary::Add),
-                        arg1: Some(StmtArg::Variable(dest_ptr)),
-                        arg2: Some(StmtArg::Literal(increase_dest_ptr_by as u8)),
-                        result: Some(dest_ptr),
+                        StmtKind::Binary(Binary::Add),
+                        Some(StmtArg::Variable(dest_ptr)),
+                        Some(StmtArg::Literal(increase_dest_ptr_by as u8)),
+                        Some(dest_ptr),
                         loc
-                    });
+                    ));
                 }
             }
         } else {
@@ -1313,47 +1331,47 @@ fn gen_copy_array_with_pointer_offsets_2(source: VarID, dest: VarID, source_ptr:
                 builder.set_insert_point_at_block_end(loop_start);
                 gen_copy_array_with_pointer_offsets_2(source, dest, source_ptr, dest_ptr, &source_type.strip_layers(1).unwrap(), &dest_type.strip_layers(1).unwrap(), false, loc, builder, context)?;
                 let stop_when_dest_ptr_reaches = dest_ptr + els_in_outermost * dest_type.inner().unwrap().size();
-                builder.insert_statement(Stmt {
+                builder.insert_statement(Stmt::new(
                     // if dest_ptr < stop_when_dest_ptr_reaches goto loop_start
-                    kind: StmtKind::Binary(Binary::Subtract),
-                    arg1: Some(StmtArg::Variable(dest_ptr)),
-                    arg2: Some(StmtArg::Literal(stop_when_dest_ptr_reaches as u8)),
-                    result: None,
+                    StmtKind::Binary(Binary::Subtract),
+                    Some(StmtArg::Variable(dest_ptr)),
+                    Some(StmtArg::Literal(stop_when_dest_ptr_reaches as u8)),
+                    None,
                     loc
-                });
+                ));
                 builder.set_branch(Some(Branch { flag: BranchFlag::BNC, to: loop_start }));
                 builder.set_continue(Some(loop_after));
                 builder.set_insert_point_at_block_end(loop_after);
             } else {
                 let i = builder.new_nameless_variable(1);
-                builder.insert_statement(Stmt {
+                builder.insert_statement(Stmt::new(
                     // i = 0
-                    kind: StmtKind::Unary(Unary::Copy),
-                    arg1: Some(StmtArg::Literal(0)),
-                    arg2: None,
-                    result: Some(i),
+                    StmtKind::Unary(Unary::Copy),
+                    Some(StmtArg::Literal(0)),
+                    None,
+                    Some(i),
                     loc
-                });
+                ));
                 let loop_start = builder.new_block();
                 let loop_after = builder.new_block();
                 builder.set_insert_point_at_block_end(loop_start);
                 gen_copy_array_with_pointer_offsets_2(source, dest, source_ptr, dest_ptr, &source_type.strip_layers(1).unwrap(), &dest_type.strip_layers(1).unwrap(), false, loc, builder, context)?;
-                builder.insert_statement(Stmt {
+                builder.insert_statement(Stmt::new(
                     // i++
-                    kind: StmtKind::Unary(Unary::Increment),
-                    arg1: Some(StmtArg::Variable(i)),
-                    arg2: None,
-                    result: Some(i),
+                    StmtKind::Unary(Unary::Increment),
+                    Some(StmtArg::Variable(i)),
+                    None,
+                    Some(i),
                     loc
-                });
-                builder.insert_statement(Stmt {
+                ));
+                builder.insert_statement(Stmt::new(
                     // if i < min(e_type[0], a_type[0]) goto loop_start
-                    kind: StmtKind::Binary(Binary::Subtract),
-                    arg1: Some(StmtArg::Variable(i)),
-                    arg2: Some(StmtArg::Literal(els_in_outermost as u8)),
-                    result: None,
+                    StmtKind::Binary(Binary::Subtract),
+                    Some(StmtArg::Variable(i)),
+                    Some(StmtArg::Literal(els_in_outermost as u8)),
+                    None,
                     loc
-                });
+                ));
                 builder.set_branch(Some(Branch { flag: BranchFlag::BNC, to: loop_start }));
                 builder.set_continue(Some(loop_after));
                 builder.set_insert_point_at_block_end(loop_after);
@@ -1361,24 +1379,24 @@ fn gen_copy_array_with_pointer_offsets_2(source: VarID, dest: VarID, source_ptr:
                 let increase_source_ptr_by = source_type.inner().unwrap().size() * (source_type.nesting[0] - els_in_outermost);
                 let increase_dest_ptr_by = dest_type.inner().unwrap().size() * (dest_type.nesting[0] - els_in_outermost);
                 if increase_source_ptr_by > 0 {
-                    builder.insert_statement(Stmt {
+                    builder.insert_statement(Stmt::new(
                         // source_ptr += increase_source_ptr_by
-                        kind: StmtKind::Binary(Binary::Add),
-                        arg1: Some(StmtArg::Variable(source_ptr)),
-                        arg2: Some(StmtArg::Literal(increase_source_ptr_by as u8)),
-                        result: Some(source_ptr),
+                        StmtKind::Binary(Binary::Add),
+                        Some(StmtArg::Variable(source_ptr)),
+                        Some(StmtArg::Literal(increase_source_ptr_by as u8)),
+                        Some(source_ptr),
                         loc
-                    });
+                    ));
                 }
                 if increase_dest_ptr_by > 0 {
-                    builder.insert_statement(Stmt {
+                    builder.insert_statement(Stmt::new(
                         // dest_ptr += increase_dest_ptr_by
-                        kind: StmtKind::Binary(Binary::Add),
-                        arg1: Some(StmtArg::Variable(dest_ptr)),
-                        arg2: Some(StmtArg::Literal(increase_dest_ptr_by as u8)),
-                        result: Some(dest_ptr),
+                        StmtKind::Binary(Binary::Add),
+                        Some(StmtArg::Variable(dest_ptr)),
+                        Some(StmtArg::Literal(increase_dest_ptr_by as u8)),
+                        Some(dest_ptr),
                         loc
-                    });
+                    ));
                 }
 
 
@@ -1396,47 +1414,47 @@ fn gen_copy_array_with_pointer_offsets_2(source: VarID, dest: VarID, source_ptr:
                 builder.set_insert_point_at_block_end(loop_start);
                 gen_copy_array_with_pointer_offsets_2(source, dest, source_ptr, dest_ptr, &source_type.strip_layers(l).unwrap(), &dest_type.strip_layers(l).unwrap(), false, loc, builder, context)?; 
                 let stop_when_dest_ptr_reaches = dest_ptr + dest_type.size();
-                builder.insert_statement(Stmt {
+                builder.insert_statement(Stmt::new(
                     // if dest_ptr < stop_when_dest_ptr_reaches goto loop_start
-                    kind: StmtKind::Binary(Binary::Subtract),
-                    arg1: Some(StmtArg::Variable(dest_ptr)),
-                    arg2: Some(StmtArg::Literal(stop_when_dest_ptr_reaches as u8)),
-                    result: None,
+                    StmtKind::Binary(Binary::Subtract),
+                    Some(StmtArg::Variable(dest_ptr)),
+                    Some(StmtArg::Literal(stop_when_dest_ptr_reaches as u8)),
+                    None,
                     loc
-                });
+                ));
                 builder.set_branch(Some(Branch { flag: BranchFlag::BNC, to: loop_start }));
                 builder.set_continue(Some(loop_after));
                 builder.set_insert_point_at_block_end(loop_after);
             } else {
                 let i = builder.new_nameless_variable(1);
-                builder.insert_statement(Stmt {
+                builder.insert_statement(Stmt::new(
                     // i = 0
-                    kind: StmtKind::Unary(Unary::Copy),
-                    arg1: Some(StmtArg::Literal(0)),
-                    arg2: None,
-                    result: Some(i),
+                    StmtKind::Unary(Unary::Copy),
+                    Some(StmtArg::Literal(0)),
+                    None,
+                    Some(i),
                     loc
-                });
+                ));
                 let loop_start = builder.new_block();
                 let loop_after = builder.new_block();
                 builder.set_insert_point_at_block_end(loop_start);
                 gen_copy_array_with_pointer_offsets_2(source, dest, source_ptr, dest_ptr, &source_type.strip_layers(l).unwrap(), &dest_type.strip_layers(l).unwrap(), false, loc, builder, context)?;
-                builder.insert_statement(Stmt {
+                builder.insert_statement(Stmt::new(
                     // i++
-                    kind: StmtKind::Unary(Unary::Increment),
-                    arg1: Some(StmtArg::Variable(i)),
-                    arg2: None,
-                    result: Some(i),
+                    StmtKind::Unary(Unary::Increment),
+                    Some(StmtArg::Variable(i)),
+                    None,
+                    Some(i),
                     loc
-                });
-                builder.insert_statement(Stmt {
+                ));
+                builder.insert_statement(Stmt::new(
                     // if i < chunk_count goto loop_start
-                    kind: StmtKind::Binary(Binary::Subtract),
-                    arg1: Some(StmtArg::Variable(i)),
-                    arg2: Some(StmtArg::Literal(chunk_count as u8)),
-                    result: None,
+                    StmtKind::Binary(Binary::Subtract),
+                    Some(StmtArg::Variable(i)),
+                    Some(StmtArg::Literal(chunk_count as u8)),
+                    None,
                     loc
-                });
+                ));
                 builder.set_branch(Some(Branch { flag: BranchFlag::BNC, to: loop_start }));
                 builder.set_continue(Some(loop_after));
                 builder.set_insert_point_at_block_end(loop_after);
@@ -1491,80 +1509,80 @@ fn gen_function_call_to_temporary(function_ident: &String, args: &Vec<Box<Expres
                     return Err(SemanticError{loc: args.get(0).unwrap().loc, message: "Cannot get len of byte".to_string()})
                 }
             };
-            builder.insert_statement(Stmt {
+            builder.insert_statement(Stmt::new(
                 // result = len
-                kind: StmtKind::Unary(Unary::Copy),
-                arg1: Some(StmtArg::Literal(len as u8)),
-                arg2: None,
-                result: Some(result),
+                StmtKind::Unary(Unary::Copy),
+                Some(StmtArg::Literal(len as u8)),
+                None,
+                Some(result),
                 loc
-            });
+            ));
         },
         Function::Wait => {
-            builder.insert_statement(Stmt {
+            builder.insert_statement(Stmt::new(
                 // wait
-                kind: StmtKind::Nullary(Nullary::Wait),
-                arg1: None,
-                arg2: None,
-                result: None,
+                StmtKind::Nullary(Nullary::Wait),
+                None,
+                None,
+                None,
                 loc
-            });
-            builder.insert_statement(Stmt {
+            ));
+            builder.insert_statement(Stmt::new(
                 // result = 0
-                kind: StmtKind::Unary(Unary::Copy),
-                arg1: Some(StmtArg::Literal(0)),
-                arg2: None,
-                result: Some(result),
+                StmtKind::Unary(Unary::Copy),
+                Some(StmtArg::Literal(0)),
+                None,
+                Some(result),
                 loc
-            });
+            ));
         },
         Function::Input => {
-            builder.insert_statement(Stmt{
+            builder.insert_statement(Stmt::new(
                 // result = input
-                kind: StmtKind::Nullary(Nullary::GetInput),
-                arg1: None,
-                arg2: None,
-                result: Some(result),
+                StmtKind::Nullary(Nullary::GetInput),
+                None,
+                None,
+                Some(result),
                 loc
-            });
+            ));
         },
         Function::UpdateScreen => {
-            builder.insert_statement(Stmt {
+            builder.insert_statement(Stmt::new(
                 // update screen
-                kind: StmtKind::Nullary(Nullary::UpdateScreen),
-                arg1: None,
-                arg2: None,
-                result: None,
+                StmtKind::Nullary(Nullary::UpdateScreen),
+                None,
+                None,
+                None,
                 loc
-            });
-            builder.insert_statement(Stmt {
+            ));
+            builder.insert_statement(Stmt::new(
                 // result = 0
-                kind: StmtKind::Unary(Unary::Copy),
-                arg1: Some(StmtArg::Literal(0)),
-                arg2: None,
-                result: Some(result),
+                StmtKind::Unary(Unary::Copy),
+                Some(StmtArg::Literal(0)),
+                None,
+                Some(result),
                 loc
-            });
+            ));
         },
         Function::RAMWrite => {
             let ptr = gen_expression_to_temporary(args.get(0).unwrap(), &BYTE, builder, context)?;
             let val = gen_expression_to_temporary(args.get(1).unwrap(), &BYTE, builder, context)?;
-            builder.insert_statement(Stmt {
+            builder.insert_statement(Stmt::new(
                 // [ptr] = val
-                kind: StmtKind::Binary(Binary::RAMWrite),
-                arg1: Some(StmtArg::Variable(ptr)),
-                arg2: Some(StmtArg::Variable(val)),
-                result: None,
+                StmtKind::Binary(Binary::RAMWrite),
+                Some(StmtArg::Variable(ptr)),
+                Some(StmtArg::Variable(val)),
+                None,
                 loc
-            });
-            builder.insert_statement(Stmt {
+            ));
+            builder.insert_statement(Stmt::new(
                 // result = 0
-                kind: StmtKind::Unary(Unary::Copy),
-                arg1: Some(StmtArg::Literal(0)),
-                arg2: None,
-                result: Some(result),
+                StmtKind::Unary(Unary::Copy),
+                Some(StmtArg::Literal(0)),
+                None,
+                Some(result),
                 loc
-            });
+            ));
         }
     }
     Ok(result)
