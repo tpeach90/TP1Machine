@@ -5,4 +5,5 @@ edition = "2024"
 
 [dependencies]
 argparse = "0.2.2"
+enumerable = "1.2.0"
 itertools = "0.14.0"

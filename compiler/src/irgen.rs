@@ -1,5 +1,5 @@
 
-use std::{cmp::min, collections::HashMap, iter::zip, ptr, vec};
+use std::{cmp::min, collections::HashMap, iter::zip, vec};
 
 // major todo: implement const ROM variables
 
@@ -172,6 +172,40 @@ impl IRBuilder {
 
     fn insert_statement(&mut self, mut statement: Stmt) {
 
+        // for optimization later. set boolean for this block if the statement resets the ALU flags
+        let resets_alu_flags = match statement.kind {
+            StmtKind::Nullary(nullary) => match nullary {
+                Nullary::UpdateScreen |
+                Nullary::Wait |
+                Nullary::GetInput |
+                Nullary::Stop => false,
+            },
+            StmtKind::Unary(unary) => match unary {
+                Unary::Copy => false,
+                Unary::Increment |
+                Unary::Decrement |
+                Unary::TwosComplement |
+                Unary::Compare |
+                Unary::BitwiseNOT |
+                Unary::Log2 => true,
+            },
+            StmtKind::Binary(binary) => match binary {
+                Binary::RAMWrite => false,
+                Binary::Add |
+                Binary::Subtract |
+                Binary::Multiply |
+                Binary::Divide |
+                Binary::Modulo |
+                Binary::BitwiseXOR |
+                Binary::BitwiseAND |
+                Binary::BitwiseOR => true
+            }
+        };
+
+        if resets_alu_flags {
+            self.ir.basic_blocks[self.curr_block].resets_alu_flags = true;
+        }
+
         // add definition annotation
         statement.definition_id = self.definition_id_counter;
         self.definition_id_counter += 1;
@@ -294,13 +328,36 @@ pub fn gen_program(node: &ProgramNode) -> Result<IntermediateRepresentation, Sem
                     return Err(SemanticError{loc: val.loc, message: format!("Mismatching types: expected {} got {}", expected_type, actual_type)});
                 }
 
-                let id = builder.add_global_constant(&identifier, flatten_constant(val));
+                // if constant is a single byte, just add it as a variable. copy propagation will substitute it in where it is needed.
+                let id = if actual_type.depth() == 0 {
+                    let id = builder.new_variable(actual_type.size(), identifier);
+                    builder.insert_statement(Stmt::new(
+                        StmtKind::Unary(Unary::Copy),
+                        Some(StmtArg::Literal(flatten_constant(val)[0])),
+                        None,
+                        Some(id),
+                        stmt.loc
+                    ));
+                    id
+                } else {
+                    builder.add_global_constant(&identifier, flatten_constant(val))
+                };
+
                 context.add_declaration(identifier, SymbolInfo { id, r#type: expected_type });
             },
         }
     }
 
     gen_block(&node.main, &mut builder, &mut context)?;
+
+    builder.insert_statement(Stmt::new(
+        // stop
+        StmtKind::Nullary(Nullary::Stop),
+        None,
+        None,
+        None,
+        CodeLocation { start_index: node.main.loc.end_index, end_index: node.main.loc.end_index }
+    ));
 
     return Ok(builder.ir);
 
@@ -572,8 +629,8 @@ fn gen_fill_from_expression(node: &Box<ExpressionNode>, dest_type: &Type, dest_p
         },
 
         ExpressionDetail::Number { val:_ } |
-        ExpressionDetail::LeftShift { val:_ } |
-        ExpressionDetail::RightShift { val:_ } |
+        // ExpressionDetail::LeftShift { val:_ } |
+        // ExpressionDetail::RightShift { val:_ } |
         ExpressionDetail::BitwiseNOT { val:_ } |
         ExpressionDetail::LogicalNOT { val:_ } |
         ExpressionDetail::Log2 { val:_ } |
@@ -655,12 +712,12 @@ fn gen_expression_to_temporary(node: &Box<ExpressionNode>, expected_type: &Type,
         ExpressionDetail::MemoryValue { val } => {
             gen_get_memory_value(val, expected_type, builder, context)
         },
-        ExpressionDetail::LeftShift { val } => {
-            gen_apply_unary(val, node.loc, Unary::LeftShift, expected_type, builder, context)
-        },
-        ExpressionDetail::RightShift { val } => {
-            gen_apply_unary(val, node.loc, Unary::RightShift, expected_type, builder, context)
-        },
+        // ExpressionDetail::LeftShift { val } => {
+        //     gen_apply_unary(val, node.loc, Unary::LeftShift, expected_type, builder, context)
+        // },
+        // ExpressionDetail::RightShift { val } => {
+        //     gen_apply_unary(val, node.loc, Unary::RightShift, expected_type, builder, context)
+        // },
         ExpressionDetail::BitwiseNOT { val } => {
             gen_apply_unary(val, node.loc, Unary::BitwiseNOT, expected_type, builder, context)
         },
@@ -777,8 +834,8 @@ fn gen_expression_as_boolean(node: &Box<ExpressionNode>, block_if_true: BlockPoi
         ExpressionDetail::Number { val:_ } |
         ExpressionDetail::FunctionCall { ident:_, args:_ } |
         ExpressionDetail::MemoryValue { val:_ } |
-        ExpressionDetail::LeftShift { val:_ } |
-        ExpressionDetail::RightShift { val:_ } |
+        // ExpressionDetail::LeftShift { val:_ } |
+        // ExpressionDetail::RightShift { val:_ } |
         ExpressionDetail::BitwiseNOT { val:_ } |
         ExpressionDetail::Log2 { val:_ } |
         ExpressionDetail::Add { left:_, right:_ } |
@@ -971,6 +1028,7 @@ fn gen_get_memory_value(node: &Box<MemoryLocationNode>, expected_type: &Type, bu
     // if has an offset, add the start of the array bound
     let source_ptr = match offset {
         Some(offset) => {
+            // offset += @source
             builder.insert_statement(Stmt::new(
                 StmtKind::Binary(Binary::Add),
                 Some(StmtArg::Variable(offset)),
@@ -983,6 +1041,12 @@ fn gen_get_memory_value(node: &Box<MemoryLocationNode>, expected_type: &Type, bu
         None => None
     };
     let dest = builder.new_nameless_variable(expected_type.size());
+    
+    /* TODO TODO TODO
+     *  need to account for constant arrays here.
+     *  eg gen_copy_from_constant
+     */
+
     gen_copy(source, dest, source_ptr, None, &r#type, expected_type, node.loc, builder, context)?;
     Ok(dest)
 }
@@ -1098,7 +1162,7 @@ fn gen_copy(source: VarID, dest:VarID, source_ptr: Option<VarID>, dest_ptr: Opti
             (Some(s_ptr), None) => {
                 builder.insert_statement(Stmt::new(
                     StmtKind::Unary(Unary::Copy),
-                    Some(StmtArg::RAMPointer(s_ptr, source)),
+                    Some(StmtArg::RAMPointer(Box::new(StmtArg::Variable(s_ptr)), source)),
                     None,
                     Some(dest),
                     loc
@@ -1109,7 +1173,7 @@ fn gen_copy(source: VarID, dest:VarID, source_ptr: Option<VarID>, dest_ptr: Opti
                 builder.insert_statement(Stmt::new(
                     StmtKind::Binary(Binary::RAMWrite),
                     Some(StmtArg::Variable(d_ptr)),
-                    Some(StmtArg::RAMPointer(s_ptr, source)),
+                    Some(StmtArg::RAMPointer(Box::new(StmtArg::Variable(s_ptr)), source)),
                     Some(dest),
                     loc
                 ));
@@ -1249,7 +1313,7 @@ fn gen_copy_array_with_pointer_offsets_2(source: VarID, dest: VarID, source_ptr:
         builder.insert_statement(Stmt::new(
             // copy from source to temporary
             StmtKind::Unary(Unary::Copy),
-            Some(StmtArg::RAMPointer(source_ptr, source)),
+            Some(StmtArg::RAMPointer(Box::new(StmtArg::Variable(source_ptr)), source)),
             None,
             Some(t),
             loc
@@ -1651,8 +1715,8 @@ impl Typeable for &Box<ExpressionNode> {
                         val.get_type(context)?
                     },
 
-                    ExpressionDetail::LeftShift { val:_ } |
-                    ExpressionDetail::RightShift { val:_ } |
+                    // ExpressionDetail::LeftShift { val:_ } |
+                    // ExpressionDetail::RightShift { val:_ } |
                     ExpressionDetail::BitwiseNOT { val:_ } |
                     ExpressionDetail::Log2 { val:_ } |
                     ExpressionDetail::LogicalNOT { val:_ } |

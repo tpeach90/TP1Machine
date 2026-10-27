@@ -4,7 +4,7 @@ use std::{env, fs, process::ExitCode};
 
 use argparse::{ArgumentParser, StoreTrue, Store, StoreOption};
 
-use crate::{irgen::{SemanticError, gen_program}, lexer::{LexError, extract_tokens}, parser::{ParseError, Parser}, tokens::TokenDetail};
+use crate::{irgen::{SemanticError, gen_program}, lexer::{LexError, extract_tokens}, optimize::{OptimizationError, optimize}, parser::{ParseError, Parser}, tokens::TokenDetail};
 
 mod ast;
 mod common;
@@ -79,13 +79,24 @@ fn main() -> ExitCode {
     }
 
     // irgen
-    let ir = match gen_program(&parsed) {
+    let mut ir = match gen_program(&parsed) {
         Ok(ir) => ir,
         Err(SemanticError{loc, message}) => {
             eprintln!("Semantic error: {}-{}: {}", loc.start_index, loc.end_index, message);
             return 1.into();
         }
     };
+   
+    // optimize
+    match optimize(&mut ir) {
+        Ok(_) => (),
+        Err(OptimizationError{loc, message}) => {
+            eprintln!("Optimization error: {}-{}: {}", loc.start_index, loc.end_index, message);
+            return 1.into();
+        }
+    }
+
+    // output ir graph
     match ir_graph_path {
         None => (),
         Some(path) => {
@@ -99,41 +110,9 @@ fn main() -> ExitCode {
             }
         },
     }
-
-
+    
 
 
     return 0.into();
-
-    // let tokens: Vec<Token> = vec![
-    //     Token{loc:CodeLocation::default(), text:String::default(), t: Number(5) },
-    //     Token{loc:CodeLocation::default(), text:String::default(), t: Operator(Plus) },
-    //     Token{loc:CodeLocation::default(), text:String::default(), t: Number(6) },
-    //     Token{loc:CodeLocation::default(), text:String::default(), t: Operator(DoubleAmpersand) },
-    //     Token{loc:CodeLocation::default(), text:String::default(), t: Number(7) },
-    //     Token{loc:CodeLocation::default(), text:String::default(), t: Operator(Minus) },
-    //     Token{loc:CodeLocation::default(), text:String::default(), t: Operator(Minus) },
-    //     Token{loc:CodeLocation::default(), text:String::default(), t: Number(8) },
-    //     Token{loc:CodeLocation::default(), text:String::default(), t: Operator(Plus) },
-    //     Token{loc:CodeLocation::default(), text:String::default(), t: Number(54) },
-    //     Token{loc:CodeLocation::default(), text:String::default(), t: Operator(Asterix) },
-    //     Token{loc:CodeLocation::default(), text:String::default(), t: Operator(Tilde) },
-    //     Token{loc:CodeLocation::default(), text:String::default(), t: LeftParenthesis },
-    //     Token{loc:CodeLocation::default(), text:String::default(), t: Number(2) },
-    //     Token{loc:CodeLocation::default(), text:String::default(), t: Operator(Ampersand) },
-    //     Token{loc:CodeLocation::default(), text:String::default(), t: Number(6) },
-    //     Token{loc:CodeLocation::default(), text:String::default(), t: RightParenthesis },
-    //     Token{loc:CodeLocation::default(), text:String::default(), t: EOF }
-    // ];
-
-    // let mut parser = Parser::new(&tokens);
-
-    // match parser.parse_expression() {
-    //     Err(e) => println!("{:?}, {}", e.loc, e.message),
-    //     Ok(node) => println!("{}", node)
-    // }
-
-
-
 
 }

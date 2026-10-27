@@ -103,8 +103,8 @@ pub enum ExpressionDetail{
     FunctionCall {ident: String, args: Vec<Box<ExpressionNode>>},
     MemoryValue {val: Box <MemoryLocationNode>},
     // MemoryReference {val: Box <MemoryLocationNode>}, // "&" followed by mem location
-    LeftShift {val: Box <ExpressionNode>},
-    RightShift {val: Box <ExpressionNode>},
+    // LeftShift {val: Box <ExpressionNode>},
+    // RightShift {val: Box <ExpressionNode>},
     BitwiseNOT {val: Box <ExpressionNode>},
     LogicalNOT {val: Box <ExpressionNode>},
     Log2 {val: Box <ExpressionNode>},
@@ -454,8 +454,8 @@ impl std::fmt::Display for ExpressionNode {
             ExpressionDetail::MemoryValue { val } /*|
             ExpressionDetail::MemoryReference { val }*/ => vec![("val".to_string(), val.to_string())],
 
-            ExpressionDetail::LeftShift { val } |
-            ExpressionDetail::RightShift { val } |
+            // ExpressionDetail::LeftShift { val } |
+            // ExpressionDetail::RightShift { val } |
             ExpressionDetail::BitwiseNOT { val } |
             ExpressionDetail::LogicalNOT { val } |
             ExpressionDetail::Log2 { val } => vec![(String::from("val"), val.to_string())],
@@ -535,8 +535,8 @@ impl ExpressionDetail {
             ExpressionDetail::FunctionCall { ident: _, args: _ } => "FunctionCall".to_string(),
             ExpressionDetail::MemoryValue { val: _ } => "MemoryValue".to_string(),
             // ExpressionDetail::MemoryReference { val: _ } => "MemoryReference".to_string(),
-            ExpressionDetail::LeftShift { val: _ } => "LeftShift".to_string(),
-            ExpressionDetail::RightShift { val: _ } => "RightShift".to_string(),
+            // ExpressionDetail::LeftShift { val: _ } => "LeftShift".to_string(),
+            // ExpressionDetail::RightShift { val: _ } => "RightShift".to_string(),
             ExpressionDetail::BitwiseNOT { val: _ } => "BitwiseNOT".to_string(),
             ExpressionDetail::LogicalNOT { val: _ } => "LogicalNOT".to_string(),
             ExpressionDetail::Log2 { val: _ } => "Log2".to_string(),

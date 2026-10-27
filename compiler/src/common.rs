@@ -1,3 +1,4 @@
+use enumerable::Enumerable;
 
 #[derive(Default, Clone, Copy, Debug)]
 pub struct CodeLocation {
@@ -6,7 +7,7 @@ pub struct CodeLocation {
 
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Enumerable)]
 pub enum BranchFlag {
     BZ = 0,
     BNZ = 1,
