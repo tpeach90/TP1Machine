@@ -94,11 +94,10 @@ enum Constant {
 enum ALUMode {
     Decrement = 0,
     Increment = 1,
-    LeftShift = 2,
-    RightShift = 3,
+    Log2 = 2,
+    Exp2 = 3,
     BitwiseNOT = 4,
     TwosComplement = 5,
-    Log2 = 6,
     Compare = 7,
     Add = 8,
     Subtract = 9,
@@ -120,6 +119,8 @@ enum BranchMode {
     BNN = 5,
     BO = 6,
     BNO = 7,
+    BGTE = 8,
+    BNGTE = 9,
 }
 
 #[derive(Debug, Clone)]
@@ -184,7 +185,7 @@ fn tokenize(input: &str) -> (Vec<Token>, Option<InputError>) {
                         tokens.push(Token::Minus);
                         iter.next();
                     }
-                    '+' | '<' | '>' | '~' | '*' | '^' | '/' | '%' | '&' | '|' | '_' => {
+                    '+' | '~' | '*' | '^' | '/' | '%' | '&' | '|' | '_' | '\''=> {
                         tokens.push(Token::Operator(ch.to_string()));
                         iter.next();
                     }
@@ -369,6 +370,8 @@ fn parse_command(instruction_tokens: &Vec<Token>) -> Result<InstructionDetail, S
                 "BNN" => Some(BranchMode::BNN),
                 "BO" => Some(BranchMode::BO),
                 "BNO" => Some(BranchMode::BNO),
+                "BGTE" => Some(BranchMode::BGTE),
+                "BNGTE" => Some(BranchMode::BNGTE),
                 _ => None
             };
             if branch_mode.is_some() {
@@ -599,10 +602,9 @@ fn parse_alu_instruction_detail_rhs(instruction_tokens: &Vec<Token>, offset: usi
                 _ => Err("Only D0 and D1 registers supported in ALU instruction")
             }?;
             let alu_mode = match op.as_str() {
-                "<" => Ok(ALUMode::LeftShift),
-                ">" => Ok(ALUMode::RightShift),
                 "~" => Ok(ALUMode::BitwiseNOT),
                 "_" => Ok(ALUMode::Log2),
+                "\'" => Ok(ALUMode::Exp2),
                 _ => Err(format!("Unexpected unary operator: {}", op.to_owned()))
             }?;
             Ok ((loc, alu_mode))

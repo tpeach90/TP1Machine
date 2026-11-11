@@ -1,0 +1,136 @@
+let const [2][16]byte AdjacencyMatrix = {
+    {0b00000010, 0b10000000},
+    {0b00000100, 0b00000001},
+    {0b00001000, 0b00000000},
+    {0b00010000, 0b00000100},
+    {0b00100000, 0b00000000},
+    {0b01000000, 0b00001001},
+    {0b10000000, 0b00100000},
+    {0b00000001, 0b00000000},
+    {0b00100010, 0b00000000},
+    {0b00000000, 0b00000100},
+    {0b00001000, 0b00000010},
+    {0b00100000, 0b00110000},
+    {0b00000000, 0b00001000},
+    {0b01000000, 0b00001000},
+    {0b10000000, 0b00000000},
+    {0b00000001, 0b00000000}
+};
+
+let const byte Unexpanded = -128;
+let const byte ScreenStart = -8;
+
+main {
+
+    // -128:    unexpanded
+    // -n..0:   expanded (next hop - n)
+    // 0..n:    next frontier (next hop)   
+    // n..2n:   in frontier (next hop + n)
+    let [16]byte nodeStatus;
+    
+    // Check for program precondition. Since condition is constant, this part will not be compiled if it passes.
+    if (!(len(AdjacencyMatrix) == len(nodeStatus))) {
+        stop();
+    };
+
+    let byte graphSize = len(AdjacencyMatrix);
+
+    let byte currentLocation = 0;
+    
+    forever {
+        wait();
+        let byte destination = input();
+
+        // validate input
+        if (destination == currentLocation || destination >= graphSize) {
+            continue;
+        };
+
+        // reset node statuses
+        let byte i = 0;
+        while (i < graphSize) {
+            [i]nodeStatus = Unexpanded;
+            i = i + 1;
+        };
+        [destination]nodeStatus = graphSize; // arbitrary next hop.
+
+        do {
+            let byte j = 0;
+            // overview: for each frontier node j, look for an unexpanded node i where (i, j) is an edge
+            while (j < graphSize) {
+
+                // skip if j not in frontier
+                if ([j]nodeStatus <<= graphSize) {
+                    j = j + 1;
+                    continue;
+                };
+
+                let byte i = 0;
+                while (i < graphSize) {
+                    if (
+                        [i]nodeStatus == Unexpanded &&
+                        exp(j%8) & [j/8][i]AdjacencyMatrix      // there exists an edge (i, j)
+                    ) {
+                        // add i to next frontier
+                        [i]nodeStatus = j;
+                    };
+                    i = i + 1;
+                };
+
+                // set j to expanded
+                [j]nodeStatus = [j]nodeStatus - (2*graphSize);
+
+                j = j + 1;
+            };
+
+            // move all nodes marked as next frontier into the frontier
+            j = 0;
+            while (j < graphSize) {
+                // use an unsigned comparison to check for range 0..n, i.e. next frontier
+                if ([j]nodeStatus < graphSize) { 
+                    [j]nodeStatus = [j]nodeStatus + graphSize;
+                };
+                j = j + 1;
+            };
+
+        } while ([currentLocation]nodeStatus << graphSize);       // while currentLocation not in frontier
+
+
+        // WRITE OUTPUT.
+        // nodeStatus now looks like this:
+        // currentLocation is in the frontier
+        // all other nodes on the path from currentLocation to destination are expanded
+
+        // add currentLocation to expanded
+        [currentLocation]nodeStatus = [currentLocation]nodeStatus - (2*graphSize);
+
+        // node 0 (start)
+        let byte screenPtr = ScreenStart;
+        let byte location = currentLocation;
+        ramWrite(screenPtr, location);
+
+        // nodes 1...end
+        while (!(location == destination)) {
+            screenPtr = screenPtr + 1;
+            if flag BNN {
+                updateScreen();
+                wait();
+                screenPtr = ScreenStart;
+            };
+            location = [location]nodeStatus + graphSize;
+            ramWrite(screenPtr, location);
+        };
+
+        // fill rest of screen with 255
+        screenPtr = screenPtr + 1;
+        while flag BN {
+            ramWrite(screenPtr, 255);
+            screenPtr = screenPtr + 1;
+        };
+        updateScreen();
+
+        currentLocation = destination;
+
+
+    };
+};

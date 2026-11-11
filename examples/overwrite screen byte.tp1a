@@ -1,21 +1,24 @@
 
+start:
 
+; memory-mapped screen from locations -8 to -1
+; mem location we will write to
+; -log2(IN) - 1
+WAIT
+D0 = IN
+= _D0
+= -D0
+= D0 - 1
 
-select: D0 = -9
-wait: WAIT
-D1 = IN
-D1
-BZ wait
-loop: = D0 + 1
-= <D1
-BNC loop
-
-; d0 now contains the register we will write to
+; value to write
 WAIT
 D1 = IN
+
+; write to screen
 [D0] = D1
 UPDATESCREEN
-PC = select
+
+PC = start
 
 
 

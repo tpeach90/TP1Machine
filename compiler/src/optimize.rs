@@ -6,13 +6,14 @@
 
 // basic block returns list of killed ids
 
-use std::{collections::{HashMap, HashSet}, format, iter::zip, matches, vec};
+use std::{collections::{HashMap, HashSet}, format, iter::zip, matches, todo, vec};
 use std::hash::{DefaultHasher, Hash, Hasher};
 
+use argparse::parser::Var;
 use enumerable::Enumerable;
 use itertools::Itertools;
 
-use crate::{common::{BranchFlag, CodeLocation}, ir::{BasicBlock, Binary, BlockPointer, Branch, DefinitionID, FoldedLiteral, IntermediateRepresentation, Nullary, Stmt, StmtArg, StmtKind, Unary, VarID}};
+use crate::{common::{BranchFlag, CodeLocation}, ir::{BasicBlock, Binary, BlockPointer, Branch, DefinitionID, FoldedLiteral, IntermediateRepresentation, Nullary, Stmt, StmtArg, StmtKind, Unary, VarID}, irgen::Type};
 
 pub struct OptimizationError {
     pub loc: CodeLocation,
@@ -49,6 +50,10 @@ pub fn optimize(ir: &mut IntermediateRepresentation) -> Result<(), OptimizationE
         }
 
         ir.reindex_definitions();
+        if global_temporary_variable_elimination(ir)? {
+            changes = true;
+        }
+
         if global_copy_propagation(ir) {
             changes = true;
         }
@@ -184,7 +189,7 @@ fn get_live_variables(ir: &IntermediateRepresentation) -> (Vec<HashSet<VarID>>, 
     let mut block_to_define_set: Vec<HashSet<VarID>> = vec![HashSet::new();ir.basic_blocks.len()];
     for (i, block) in ir.basic_blocks.iter().enumerate() {
         for stmt in &block.statements {
-            for var_id in &stmt.vars_used() {
+            for var_id in &stmt.vars_used_set() {
                 if !block_to_define_set[i].contains(var_id) {
                     block_to_upwards_exposed_set[i].insert(*var_id);
                 }
@@ -284,7 +289,7 @@ fn get_available_copy_statements(ir: &IntermediateRepresentation) -> Vec<Vec<Cop
                 Some(result_var_id) => {
                     downwards_exposed = downwards_exposed.into_iter().filter(|CopyOp { source: copy_op_source, destination: copy_op_destination }|
                         *copy_op_destination != result_var_id
-                        && !copy_op_source.vars_used().contains(&result_var_id)
+                        && !copy_op_source.vars_used_set().contains(&result_var_id)
                     ).collect();
                 }
                 None => ()
@@ -346,7 +351,7 @@ fn get_available_copy_statements(ir: &IntermediateRepresentation) -> Vec<Vec<Cop
                 let mut parent_avail_out = block_to_downwards_exposed[*parent_block_ptr].clone();
                 parent_avail_out.extend(block_to_avail_in[*parent_block_ptr].iter().filter(|CopyOp { source, destination }|
                     // for each copy op, neither source or destination is killed in the parent.
-                    block_to_vars_killed[*parent_block_ptr].intersection(&source.vars_used()).count() == 0
+                    block_to_vars_killed[*parent_block_ptr].intersection(&source.vars_used_set()).count() == 0
                     && !block_to_vars_killed[*parent_block_ptr].contains(destination)
                 ).cloned());
 
@@ -374,6 +379,138 @@ fn get_available_copy_statements(ir: &IntermediateRepresentation) -> Vec<Vec<Cop
 
 }
 
+// Definitions for the start of each block which:
+// 1. Result value has not been overwritten on any code path from the defn to the current point
+// 2. Args have not been overwritten on any code path from the defn to the current point
+// Also returns vars used in each defnintion - useful info.
+fn get_available_definitions(ir: &IntermediateRepresentation) -> (Vec<HashSet<DefinitionID>>, HashMap<DefinitionID, HashSet<VarID>>) {
+
+    let mut defn_to_vars = HashMap::<DefinitionID, HashSet<VarID>>::new();
+    for block in &ir.basic_blocks {
+        for stmt in &block.statements {
+            let mut vars = stmt.vars_used_set();
+            match stmt.result {
+                Some(var_id) => {
+                    vars.insert(var_id);
+                },
+                None => (),
+            }
+            defn_to_vars.insert(stmt.definition_id, vars);
+        }
+    }
+
+    let mut block_to_downwards_exposed: Vec<HashSet<DefinitionID>> = vec![];
+    let mut block_to_vars_overwritten: Vec<HashSet<VarID>> = vec![];
+    for block in &ir.basic_blocks {
+        let mut downwards_exposed = Vec::<DefinitionID>::new();
+        let mut vars_overwritten = HashSet::<VarID>::new();
+        for stmt in &block.statements {
+            match stmt.result {
+                Some(var_id) => {
+                    vars_overwritten.insert(var_id);
+                    // remove defs killed by this statement
+                    downwards_exposed = downwards_exposed.into_iter().filter(|def_id|
+                        !defn_to_vars.get(def_id).unwrap().contains(&var_id)
+                    ).collect();
+                },
+                None => (),
+            }
+        }
+        block_to_downwards_exposed.push(downwards_exposed.into_iter().collect());
+        block_to_vars_overwritten.push(vars_overwritten);
+    }
+
+    // defns killed due to overwritten vars
+    let mut block_to_killset: Vec<HashSet<DefinitionID>> = vec![];
+    for vars_overwritten in block_to_vars_overwritten {
+        let killset: HashSet<DefinitionID> = defn_to_vars.iter().filter(|(_, defn_var_ids)|
+            // kill if defn uses or writes to any of vars_overwritten
+            defn_var_ids.intersection(&vars_overwritten).next().is_none()
+        ).map(|(defn_id, _)| *defn_id).collect();
+        block_to_killset.push(killset);
+    }
+
+    let all_defn_ids: HashSet<DefinitionID> = defn_to_vars.keys().cloned().collect();
+    let mut block_to_initial_in_set: Vec<HashSet<DefinitionID>> = vec![all_defn_ids.clone();ir.basic_blocks.len()];
+    block_to_initial_in_set[0].clear();
+
+
+
+    return (
+        solve_forward_data_flow_problem(block_to_initial_in_set, &block_to_killset, &block_to_downwards_exposed, &get_all_block_parents(ir), true, 1),
+        defn_to_vars
+    );
+
+}
+
+// solves InSet(n) = ∪_{m ∈ preds(n)} (DESet(m) ∪ (InSet(m) - KillSet(m)))
+// initial big union is replaced with intersection if intersection=true
+pub fn solve_forward_data_flow_problem<T: Clone + Hash + Eq>(block_to_initial_in_set: Vec<HashSet<T>>, block_to_killset: &Vec<HashSet<T>>, block_to_downwards_exposed_set: &Vec<HashSet<T>>, block_to_parents: &Vec<Vec<BlockPointer>>, intersection: bool, start_at_block: usize) -> Vec<HashSet<T>>{
+    
+    let mut block_to_in_set = block_to_initial_in_set;
+    
+    loop {
+        let mut changes = false;
+        
+        for block_ptr in start_at_block..block_to_in_set.len() {
+            let mut in_set = block_to_in_set[block_ptr].clone();
+
+            for parent_ptr in &block_to_parents[block_ptr] {
+                let mut parent_out_set = block_to_downwards_exposed_set[*parent_ptr].clone();
+                for t in &block_to_in_set[*parent_ptr] {
+                    if !block_to_killset[*parent_ptr].contains(t) {
+                        parent_out_set.insert(t.clone());
+                    }
+                }
+                if intersection {
+                    in_set = in_set.into_iter().filter(|t|
+                        parent_out_set.contains(t)
+                    ).collect();
+                } else {
+                    in_set.extend(parent_out_set);
+                }
+            }
+            
+            if in_set.len() != block_to_in_set[block_ptr].len() {
+                changes = true;
+            }
+            block_to_in_set[block_ptr] = in_set;
+        }
+
+        if !changes {
+            break;
+        }
+    }
+
+    block_to_in_set
+}
+
+pub fn gcp_get_var_replacement(var_id_x: VarID, avail_copy_statements: &Vec<CopyOp>) -> Option<CopyOp> {
+    let replacement = avail_copy_statements.iter().find(|CopyOp { destination, .. }| *destination == var_id_x).cloned();
+    return match &replacement {
+        Some(CopyOp { source, .. }) => match source {
+            StmtArg::ROMPointer(_, _) |
+            StmtArg::RAMPointer(_, _) => None, // propagating a pointer dereference might be slower & increase file size
+            StmtArg::Literal(_) |
+            StmtArg::Variable(_) |
+            StmtArg::LocationOfVariable(_) |
+            StmtArg::FoldedLiteral(_) => replacement,
+        },
+        None => None
+    };
+}
+
+pub fn gcp_get_arg_replacement(arg: &StmtArg, avail_copy_statements: &Vec<CopyOp>) -> Option<StmtArg> {
+    match arg {
+        StmtArg::Variable(var_id) => Some(gcp_get_var_replacement(*var_id, avail_copy_statements)?.source),
+        StmtArg::RAMPointer(arg2, var_id ) =>
+            Some(StmtArg::RAMPointer(Box::from(gcp_get_arg_replacement(arg2, avail_copy_statements)?), *var_id)),
+        StmtArg::ROMPointer(arg2, var_id ) =>
+            Some(StmtArg::ROMPointer(Box::from(gcp_get_arg_replacement(arg2, avail_copy_statements)?), *var_id)),
+        _ => None
+    }
+}
+
 pub fn global_copy_propagation(ir: &mut IntermediateRepresentation) -> bool {
 
     let mut avail_copy_statements_all = get_available_copy_statements(ir);
@@ -388,46 +525,32 @@ pub fn global_copy_propagation(ir: &mut IntermediateRepresentation) -> bool {
 
         for stmt in &ir.basic_blocks[block_id].statements {
             
-            // to be called on both args of the stmt
-            let get_arg_replacement = |var_id_x: VarID| {
-
-                let replacement = avail_copy_statements.iter().find(|CopyOp { destination, .. }| *destination == var_id_x).cloned();
-                return match &replacement {
-                    Some(CopyOp { source, .. }) => match source {
-                        StmtArg::RAMPointer(_, _) => None, // propagating a pointer dereference might be slower & increase file size
-                        StmtArg::Literal(_) |
-                        StmtArg::Variable(_) |
-                        StmtArg::LocationOfVariable(_) |
-                        StmtArg::Constant(_) |
-                        StmtArg::FoldedLiteral(_) => replacement,
-                    },
-                    None => None
-                };
-            };
+            
 
             let mut new_stmt = stmt.clone();
 
             // replace args if copy propagation is found to be valid
-            match stmt.arg1 {
-                Some(StmtArg::Variable(var_id)) => match get_arg_replacement(var_id) {
-                    Some(op) => {
-                        new_stmt.arg1 = Some(op.source);
+            match &stmt.arg1 {
+                Some(arg) => match gcp_get_arg_replacement(arg, &avail_copy_statements) {
+                    Some(arg_replacement) => {
+                        new_stmt.arg1 = Some(arg_replacement);
                         block_changes = true;
                     },
-                    _ => ()
+                    None => ()
                 },
-                _ => ()
-            };
-            match stmt.arg2 {
-                Some(StmtArg::Variable(var_id)) => match get_arg_replacement(var_id) {
-                    Some(op) => {
-                        new_stmt.arg2 = Some(op.source);
+                None => ()
+            }
+
+            match &stmt.arg2 {
+                Some(arg) => match gcp_get_arg_replacement(arg, &avail_copy_statements) {
+                    Some(arg_replacement) => {
+                        new_stmt.arg2 = Some(arg_replacement);
                         block_changes = true;
                     },
-                    _ => ()
+                    None => ()
                 },
-                _ => ()
-            };
+                None => ()
+            }
 
             // remove avails killed by this statement
             match &new_stmt.result {
@@ -450,23 +573,213 @@ pub fn global_copy_propagation(ir: &mut IntermediateRepresentation) -> bool {
 
             new_stmts.push(new_stmt);
 
-            if block_changes {
-                changes = true;
-            }
-
+            
         }
 
         ir.basic_blocks[block_id].statements = new_stmts;
 
-        // copy ops might not be available now - need to recalculate everything
         if block_changes {
+            changes = true;
+            // copy ops might not be available now - need to recalculate everything
             avail_copy_statements_all = get_available_copy_statements(ir);
         }
     }
 
-    // todo, does replacing instructions invalidate the avail statements?
 
     changes
+}
+
+
+// eliminate temporary definitions that are only created to be copied, e.g.:
+// c = a + b
+// ...
+// d = copy c
+// is transformed to:
+// c = a + b
+// ...
+// d = a + b
+// provided a, b, c are not overwritten in the "..." section
+//
+pub fn global_temporary_variable_elimination(ir: &mut IntermediateRepresentation) -> Result<bool, OptimizationError> {
+
+    // in order to find definitions that are only used once
+    // count total possible uses for each definition
+    let mut defn_to_use_count: HashMap<DefinitionID, usize> = HashMap::new();
+    let block_to_reaching_definitions = get_reaching_definitions(ir);
+    for block_ptr in 0..ir.basic_blocks.len() {
+        let mut reaching_definitions: Vec<Definition> = block_to_reaching_definitions[block_ptr].in_set.iter().cloned().collect_vec();
+        for stmt in &ir.basic_blocks[block_ptr].statements {
+            // add to count
+            for var_id in stmt.vars_used() {
+                for Definition { id: defn_id, var_id: defn_var_id } in &reaching_definitions {
+                    if *defn_var_id == var_id {
+                        match defn_to_use_count.get(defn_id) {
+                            Some(count) => {
+                                defn_to_use_count.insert(*defn_id, count + 1);
+                            },
+                            None => {
+                                defn_to_use_count.insert(*defn_id, 1);
+                            }
+                        }
+                    }
+                }
+            }
+            // kill defns
+            match stmt.result {
+                Some(result_var_id) => {
+                    reaching_definitions = reaching_definitions.into_iter().filter(|defn|
+                        defn.var_id != result_var_id
+                    ).collect_vec();
+                    reaching_definitions.push(Definition { id: stmt.definition_id, var_id: result_var_id });
+                }
+                None => ()
+            }
+        }
+    }
+
+    // adding another ALU statement after the final ALU statement in some blocks could mess up the branching.
+    // keep track of where the final ALU statement is in these blocks.
+    let mut block_to_first_unsafe_index: Vec<Option<usize>> = vec![];
+    'blockLoop: for block_ptr in 0..ir.basic_blocks.len() {
+        let must_preserve_alu_flags = ir.basic_blocks[block_ptr].branch.is_some() || !all_paths_out_of_block_reset_alu_flags_before_branching(ir, block_ptr)?;
+        if must_preserve_alu_flags {
+            // find final ALU statement
+            for (i, stmt) in ir.basic_blocks[block_ptr].statements.iter().enumerate().rev() {
+                if is_alu_instruction(stmt) {
+                    block_to_first_unsafe_index.push(Some(i));
+                    continue 'blockLoop;
+                }
+            }
+            block_to_first_unsafe_index.push(Some(0));
+        } else {
+            block_to_first_unsafe_index.push(None);
+        }
+    }
+
+
+    // step through the code and look for statements that:
+    // 1. Are copy statements (D1: a <- copy b)
+    // 2. b is a variable, and b has only 1 reaching definition (D0: b <- expr)
+    // 3. D0 has only 1 use (which is in D1)
+    // 4. In D0, the result b and any vars used in expr are not overwritten on any path from D0 to D1 (including paths that contain D1 more than once)
+    // 5. If expr is an ALU expression:
+    //  a) deleting D0 would not change the execution of the program due to ALU flags not being set
+    //  b) moving expr to D1 would not change the execution of the program due to ALU flags being set
+    // In that case, we can copy the calculation to replace the Copy expression.
+    // e.g. replace D1 with a <- expr
+    // Since original definition no longer has any uses, it can be removed in subsequent passes
+    let (mut block_to_available_definitions, mut defn_to_vars_used) = get_available_definitions(ir);
+
+    let mut changes = false;
+
+    for block_ptr in 0..ir.basic_blocks.len() {
+        let mut block_changes = false;
+        let mut new_stmts: Vec<Stmt> = Vec::new();
+        let mut reaching_definitions: Vec<Definition> = block_to_reaching_definitions[block_ptr].in_set.iter().cloned().collect_vec();
+        let mut available_definitions: HashSet<DefinitionID> = block_to_available_definitions[block_ptr].clone();
+        for (i_1, stmt_1) in ir.basic_blocks[block_ptr].statements.iter().enumerate() {
+            let maybe_replacement = match stmt_1 {
+                Stmt { kind: StmtKind::Unary(Unary::Copy), arg1: Some(StmtArg::Variable(b_var_id)), result: Some(_), .. } => {
+                    (|| {
+                        // check b has only 1 reaching defn (d0)
+                        let b_reaching_defs = reaching_definitions.iter()
+                            .filter(|rd| rd.var_id == *b_var_id)
+                            .map(|rd| rd.id).collect_vec();
+                        if b_reaching_defs.len() != 1 {
+                            return None;
+                        }
+                        let d0: DefinitionID = b_reaching_defs[0];
+                        // check d0 is used exactly once
+                        if defn_to_use_count.get(&d0).is_none_or(|x| *x!=1) {
+                            return None;
+                        }
+                        // check d0 reaches every path into d1 without operands or result being overwritten
+                        if !available_definitions.contains(&d0) {
+                            return None;
+                        }
+                        // check safe to move expr - ALU flags
+                        let (loc_0, stmt_0) = ir.get_definition(d0).unwrap();
+                        let is_in_unsafe_zone_0 = block_to_first_unsafe_index[loc_0.block_id].is_some_and(|unsafe_idx| loc_0.stmt_idx_in_block >= unsafe_idx);
+                        let is_in_unsafe_zone_1 = block_to_first_unsafe_index[block_ptr].is_some_and(|unsafe_idx| i_1 >= unsafe_idx);
+                        if 
+                            is_alu_instruction(stmt_0) &&
+                            (
+                                (loc_0.block_id != block_ptr && (is_in_unsafe_zone_0 || is_in_unsafe_zone_1)) ||
+                                // moving within the unsafe zone of a single block is permitted
+                                (loc_0.block_id == block_ptr && (is_in_unsafe_zone_0 != is_in_unsafe_zone_1))
+                            )
+                        {
+                            return None;
+                        }
+
+                        // combine 2 statements
+                        let mut new_stmt_1 = stmt_0.clone();
+                        new_stmt_1.definition_id = stmt_1.definition_id;
+                        new_stmt_1.result = stmt_1.result;
+                        Some((d0, new_stmt_1))
+                    })()
+                },
+                _ => None
+            };
+            
+            // update defn_to_use_count
+            let new_stmt_1 = match maybe_replacement {
+                Some((d0, new_stmt_1)) => {
+                    // old definition now has no uses
+                    defn_to_use_count.insert(d0, 0);
+                    // additional definition uses now occur in new statement.
+                    let var_to_defn_use_count_1: HashMap<VarID, usize> = new_stmt_1.vars_used().iter().sorted().dedup_with_count().map(|(n,var_id)|(*var_id,n)).collect();
+                    for Definition { id: defn_id, var_id } in &reaching_definitions {
+                        match var_to_defn_use_count_1.get(var_id) {
+                            Some(use_count) => {
+                                let new_use_count = defn_to_use_count.get(defn_id).unwrap_or(&0) + use_count;
+                                defn_to_use_count.insert(*defn_id, new_use_count);
+                            }
+                            None => ()
+                        }
+                    }
+                    block_changes = true;
+                    new_stmt_1
+                },
+                None => {
+                    stmt_1.clone()
+                }
+            };
+
+            // update reaching definitions.
+            match stmt_1.result {
+                Some(var_id) => {
+                    reaching_definitions = reaching_definitions.into_iter().filter(|defn| defn.var_id != var_id).collect_vec();
+                    reaching_definitions.push(Definition { id: stmt_1.definition_id, var_id });
+                },
+                None => ()
+            }
+
+            // update available definitions
+            match stmt_1.result {
+                Some(var_id) => {
+                    available_definitions = available_definitions.into_iter().filter(|defn_id| !defn_to_vars_used.get(defn_id).unwrap().contains(&var_id)).collect();
+                    available_definitions.insert(stmt_1.definition_id);
+                    defn_to_vars_used.insert(stmt_1.definition_id, new_stmt_1.vars_used_set());
+                },
+                None => ()
+            }
+
+            new_stmts.push(new_stmt_1);
+
+        }
+
+        if block_changes {
+            ir.basic_blocks[block_ptr].statements = new_stmts;
+            changes = true;
+            // available definitions might have changed now, so recalculate
+            (block_to_available_definitions, defn_to_vars_used) = get_available_definitions(ir);
+        }
+    }
+
+
+    Ok(changes)
+
 }
 
 // replace Stmt (S1) args if:
@@ -510,10 +823,10 @@ pub fn global_copy_propagation_old(ir: &mut IntermediateRepresentation) -> Resul
                         }
                     )) => {
                         match def_arg {
+                            StmtArg::ROMPointer(_, _) |
                             StmtArg::RAMPointer(_, _) => Ok(None), // propagating a pointer dereference might be slower & increase file size
                             StmtArg::Literal(_) |
                             StmtArg::LocationOfVariable(_) |
-                            StmtArg::Constant(_) |
                             StmtArg::FoldedLiteral(_) => Ok(Some(def_arg.clone())),
                             StmtArg::Variable(var_id_y) => {
                                 // check what definition of var_id_y this statement is using
@@ -608,8 +921,12 @@ enum StmtEffect {
 fn eliminiate_no_effect_code(ir: &mut IntermediateRepresentation) -> Result<bool, OptimizationError> {
     let (live_out_all, live_in_block_0) = get_live_variables(ir);
 
-    if live_in_block_0.len() != 0 {
-        let mut var_names = live_in_block_0.iter().map(|var_id| 
+    
+    // check for uninitialized variables.
+    // the global constants are expected in live_in_block_0. remove them here.
+    let live_in_block_0_non_const = live_in_block_0.iter().filter(|var_id| !ir.global_constants.contains_key(var_id)).cloned().collect_vec();
+    if live_in_block_0_non_const.len() != 0 {
+        let mut var_names = live_in_block_0_non_const.iter().map(|var_id| 
             ir.id_to_ident.get(var_id).unwrap_or(&"nameless var".to_string()).to_owned()
         );
         return Err(OptimizationError{ loc: CodeLocation { start_index: 0, end_index: 0 }, message: format!("The following variable(s) are potentially used before initialization: {}", var_names.join(", ")) });
@@ -635,12 +952,16 @@ fn eliminiate_no_effect_code(ir: &mut IntermediateRepresentation) -> Result<bool
                 StmtKind::Nullary(Nullary::UpdateScreen) | 
                 StmtKind::Nullary(Nullary::Wait) | 
                 StmtKind::Nullary(Nullary::Stop) => StmtEffect::Effect,
+                StmtKind::Nullary(Nullary::InitializeArray) |
                 StmtKind::Nullary(Nullary::GetInput) | 
                 StmtKind::Unary(Unary::Copy) => {
-                    if stmt.result.is_some_and(|var_id| live.contains(&var_id)) {
-                        StmtEffect::Effect
-                    } else {
-                        StmtEffect::NoEffect
+                    match (&stmt.arg1, &stmt.result) {
+                        (Some(StmtArg::Variable(arg_var_id)), Some(result_var_id)) if *arg_var_id == *result_var_id =>
+                            StmtEffect::NoEffect, // x = x
+                        (_, Some(result_var_id)) if live.contains(result_var_id) =>
+                            StmtEffect::Effect,
+                        _ => 
+                            StmtEffect::NoEffect
                     }
                 },
                 StmtKind::Binary(Binary::RAMWrite) => {
@@ -657,6 +978,7 @@ fn eliminiate_no_effect_code(ir: &mut IntermediateRepresentation) -> Result<bool
                 StmtKind::Unary(Unary::Compare) |
                 StmtKind::Unary(Unary::BitwiseNOT) |
                 StmtKind::Unary(Unary::Log2) |
+                StmtKind::Unary(Unary::Exp2) |
                 StmtKind::Binary(Binary::Add) |
                 StmtKind::Binary(Binary::Subtract) |
                 StmtKind::Binary(Binary::Multiply) |
@@ -687,7 +1009,7 @@ fn eliminiate_no_effect_code(ir: &mut IntermediateRepresentation) -> Result<bool
                         }
                         None => ()
                     };
-                    live.extend(stmt.vars_used());
+                    live.extend(stmt.vars_used_set());
                 },
                 StmtEffect::ALUFlagsOnly => {
                     let mut new_statement = stmt.clone();
@@ -696,7 +1018,7 @@ fn eliminiate_no_effect_code(ir: &mut IntermediateRepresentation) -> Result<bool
                         changes = true;
                     }
                     new_statements.push(new_statement);
-                    live.extend(stmt.vars_used());
+                    live.extend(stmt.vars_used_set());
                 },
                 StmtEffect::NoEffect => {
                     // don't add to new_statements - eliminate
@@ -773,7 +1095,7 @@ pub fn local_value_numbering_optimization_algorithm_with_extensions(ir: &mut Int
     loop {
         let mut changes_this_iteration = false;
 
-        if simplify_independent_statements_in_block(block, all_paths_out_of_block_reset_alu_flags_before_branching) {
+        if simplify_independent_statements_in_block(block, all_paths_out_of_block_reset_alu_flags_before_branching, &ir.global_constants) {
             changes_this_iteration = true;
             changes = true;
         }
@@ -803,7 +1125,7 @@ fn get_idx_of_final_alu_instruction(block: &BasicBlock) -> Option<usize> {
 }
 
 // returns true if changes
-fn simplify_independent_statements_in_block(block: &mut BasicBlock, may_replace_final_alu_instruction: bool) -> bool {
+fn simplify_independent_statements_in_block(block: &mut BasicBlock, may_replace_final_alu_instruction: bool, global_constants: &HashMap<usize, (Type, Vec<u8>)>) -> bool {
     
     let mut changes = false;
     
@@ -817,7 +1139,7 @@ fn simplify_independent_statements_in_block(block: &mut BasicBlock, may_replace_
     // also simplify branches if possible
     for i in 0..block.statements.len() {
 
-        let (maybe_new_stmt, maybe_flagset) = simplify_single_statement(&block.statements[i]);
+        let (maybe_new_stmt, maybe_flagset) = simplify_single_statement(&block.statements[i], global_constants);
 
         // some consideration is needed with replacing instructions that can alter the ALU flag status at the end of this block
         // specifically the *last* alu instruction.
@@ -828,7 +1150,10 @@ fn simplify_independent_statements_in_block(block: &mut BasicBlock, may_replace_
         // Ignore the first case for now (todo) and only implement the second case
         
         let is_final_alu_stmt = final_alu_stmt_i.is_some_and(|fas_i| fas_i == i);
-        if !is_final_alu_stmt {
+        let replacement_sets_alu_flags_in_same_way = maybe_flagset.as_ref().is_some_and(|fs|
+            fs.zcno_from_replacement_instruction && fs.z.is_none() && fs.c.is_none() && fs.n.is_none() && fs.o.is_none()
+        );
+        if !is_final_alu_stmt || replacement_sets_alu_flags_in_same_way {
             // replacement always valid
             match maybe_new_stmt {
                 Some(new_stmt) => {
@@ -1006,7 +1331,7 @@ fn simplify_independent_statements_in_block(block: &mut BasicBlock, may_replace_
 // returns:
 // Option<Stmt> a replacement Stmt, if the input could be reduced
 // Option<PartialFlagSet> info about the flags set by the original statement, if it was an ALU instruction
-pub fn simplify_single_statement(stmt: &Stmt) -> (Option<Stmt>, Option<PartialFlagSet>) {
+pub fn simplify_single_statement(stmt: &Stmt, global_constants: &HashMap<usize, (Type, Vec<u8>)>) -> (Option<Stmt>, Option<PartialFlagSet>) {
 
     match stmt.kind {
         StmtKind::Nullary(_) => (None, None),
@@ -1021,14 +1346,16 @@ pub fn simplify_single_statement(stmt: &Stmt) -> (Option<Stmt>, Option<PartialFl
                 Unary::Compare => Some(PartialFlagSet::new().nc().no()),
                 Unary::BitwiseNOT => Some(PartialFlagSet::new().nc().no()),
                 Unary::Log2 => Some(PartialFlagSet::new().nc()),
+                Unary::Exp2 => Some(PartialFlagSet::new().nc()),
             };
 
             // constant folding
-            // is a1 constant? if so, convert to folded literal
+            // is a1 constant? if so, convert entire statement to a copy of a folded literal
             let new_fl = match arg_to_fl(&a1) {
                 Some(fl) => match unary {
-                    Unary::Copy => None,
-                    Unary::Compare => None,
+                    Unary::Copy => Some(*fl),
+                    Unary::Compare => 
+                        Some(FoldedLiteral::Compare(fl)),
                     Unary::Increment => 
                         Some(FoldedLiteral::Increment(fl)),
                     Unary::Decrement => 
@@ -1039,14 +1366,16 @@ pub fn simplify_single_statement(stmt: &Stmt) -> (Option<Stmt>, Option<PartialFl
                         Some(FoldedLiteral::BitwiseNOT(fl)),
                     Unary::Log2 => 
                         Some(FoldedLiteral::Log2(fl)),
+                    Unary::Exp2 => 
+                        Some(FoldedLiteral::Exp2(fl)),
                 }
                 None => None,
             };
             // reduce folded literal if possible
             let (new_arg, more_detailed_partial_flagset) = match new_fl {
-                Some(fl) => match reduce_fl(&fl) {
+                Some(fl) => match reduce_fl(&fl, global_constants) {
                     Some((lit, flag_set)) => {
-                        (Some(StmtArg::Literal(lit)), Some(flag_set.to_partial()))
+                        (Some(StmtArg::Literal(lit)), flag_set.map(|flag_set| flag_set.to_partial()))
                     },
                     None => {
                         (Some(StmtArg::FoldedLiteral(Box::from(fl))), None)
@@ -1064,14 +1393,14 @@ pub fn simplify_single_statement(stmt: &Stmt) -> (Option<Stmt>, Option<PartialFl
             }
             // create replacement Stmt
             let new_stmt = match new_arg {
-                Some(arg) => {
+                Some(arg) if arg != a1 => {
                     let mut new_stmt = stmt.clone();
                     new_stmt.kind = StmtKind::Unary(Unary::Copy);
                     new_stmt.arg1 = Some(arg);
                     new_stmt.arg2 = None;
                     Some(new_stmt)
                 }
-                None => None
+                _ => None
             };
 
            
@@ -1207,8 +1536,8 @@ pub fn simplify_single_statement(stmt: &Stmt) -> (Option<Stmt>, Option<PartialFl
 
             // reduce FoldedLiteral to Literal if possible
             let (arg, more_detailed_partial_flagset) = match new_fl {
-                Some(fl) => match reduce_fl(&fl) {
-                    Some((lit, flagset)) => (Some(StmtArg::Literal(lit)), Some(flagset.to_partial())),
+                Some(fl) => match reduce_fl(&fl, global_constants) {
+                    Some((lit, flagset)) => (Some(StmtArg::Literal(lit)), flagset.map(|fs| fs.to_partial())),
                     None => (Some(StmtArg::FoldedLiteral(Box::new(fl))), None),
                 },
                 None => (None, None),
@@ -1292,6 +1621,7 @@ fn subexpression_elimination_in_block(block: &mut BasicBlock, may_replace_final_
                         Nullary::UpdateScreen |
                         Nullary::Wait |
                         Nullary::GetInput |
+                        Nullary::InitializeArray |
                         Nullary::Stop => {
                             (false, None)
                         }
@@ -1305,7 +1635,8 @@ fn subexpression_elimination_in_block(block: &mut BasicBlock, may_replace_final_
                         Unary::Decrement |
                         Unary::TwosComplement |
                         Unary::BitwiseNOT |
-                        Unary::Log2 => {
+                        Unary::Log2 |
+                        Unary::Exp2 => {
                             let subexpression = Subexpression::Unary { kind: unary.clone(), arg: arg.clone() };
                             let maybe_live_defn = live_defns.iter().find(|&defn| defn.subexpression == subexpression);
                             match maybe_live_defn {
@@ -1531,7 +1862,14 @@ pub fn arg_to_fl(arg: &StmtArg) -> Option<Box<FoldedLiteral>> {
         StmtArg::Variable(_) => None,
         StmtArg::RAMPointer(_, _) => None,
         StmtArg::LocationOfVariable(var_id) => Some(Box::from(FoldedLiteral::LocationOfVariable(*var_id))),
-        StmtArg::Constant(_) => None, // todo
+        StmtArg::ROMPointer(ptr, _) => {
+            match arg_to_fl(ptr) {
+                Some(fl) => {
+                    Some(Box::from(FoldedLiteral::ROMDereference(fl)))
+                },
+                None => None
+            }
+        },
         StmtArg::FoldedLiteral(folded_literal) => Some(folded_literal.clone()),
     }
 }
@@ -1628,27 +1966,85 @@ impl PartialFlagSet {
     }
 }
 
+// to work out value of a ROMDereference fl, replace first LocationOfVariable with 0, then reduce.
+// this will find the OFFSET in the array, rather than the absolute memory location.
+pub fn find_and_replace_const_var_id_in_fl(fl: &mut FoldedLiteral) -> Option<VarID> {
+    match fl {
+        FoldedLiteral::Literal(_) => None,
+        FoldedLiteral::ROMDereference(_) => None,
+        FoldedLiteral::LocationOfVariable(var_id) => {
+            let var_id = *var_id;
+            *fl = FoldedLiteral::Literal(0);
+            Some(var_id)
+        },
+        FoldedLiteral::Compare(folded_literal) |
+        FoldedLiteral::BitwiseNOT(folded_literal) |
+        FoldedLiteral::Log2(folded_literal) |
+        FoldedLiteral::Exp2(folded_literal) |
+        FoldedLiteral::Increment(folded_literal) |
+        FoldedLiteral::Decrement(folded_literal) |
+        FoldedLiteral::TwosComplement(folded_literal) => find_and_replace_const_var_id_in_fl(folded_literal),
+        FoldedLiteral::Add(folded_literal, folded_literal1) |
+        FoldedLiteral::Subtract(folded_literal, folded_literal1) |
+        FoldedLiteral::Multiply(folded_literal, folded_literal1)  |
+        FoldedLiteral::Divide(folded_literal, folded_literal1)  |
+        FoldedLiteral::Modulo(folded_literal, folded_literal1) |
+        FoldedLiteral::BitwiseXOR(folded_literal, folded_literal1)  |
+        FoldedLiteral::BitwiseAND(folded_literal, folded_literal1)  |
+        FoldedLiteral::BitwiseOR(folded_literal, folded_literal1) => {
+            find_and_replace_const_var_id_in_fl(folded_literal).or(find_and_replace_const_var_id_in_fl(folded_literal1))
+        }
+    }
+}
 
 // todo technically could get some info about the flags even if the constant can't be fully reduced
-pub fn reduce_fl(fl: &FoldedLiteral) -> Option<(u8, FlagSet)> {
+pub fn reduce_fl(fl: &FoldedLiteral, global_constants: &HashMap<usize, (Type, Vec<u8>)>) -> Option<(u8, Option<FlagSet>)> {
     match *fl {
         FoldedLiteral::LocationOfVariable(_) => None,
-        FoldedLiteral::Literal(lit) => Some((lit, FlagSet::from_zn(lit))),
+        // FoldedLiteral::Literal(lit) => Some((lit, FlagSet::from_zn(lit))),
+        FoldedLiteral::Literal(lit) => Some((lit, None)),
+        FoldedLiteral::ROMDereference(ref folded_literal) => {
+            // dfs to work out what variable is being referenced, then replace LocationOfVariable with literal 0
+            // this will find the offset in the array.
+            let mut fl = folded_literal.clone();
+            match find_and_replace_const_var_id_in_fl(&mut fl) {
+                Some(var_id) => {
+                    let offset = reduce_fl(&fl, global_constants)?.0;
+                    let (_, arr) = global_constants.get(&var_id)?;
+                    let val = *arr.get(usize::from(offset))?;
+                    Some((val, None))
+                },
+                None => None
+            }
+        },
+        FoldedLiteral::Compare(ref folded_literal) => {
+            let result = reduce_fl(folded_literal, global_constants)?.0;
+            Some((result, Some(FlagSet::from_zn(result))))
+        },
         FoldedLiteral::BitwiseNOT(ref folded_literal) => {
-            let result = !reduce_fl(folded_literal)?.0;
-            Some((result, FlagSet::from_zn(result)))
+            let result = !reduce_fl(folded_literal, global_constants)?.0;
+            Some((result, Some(FlagSet::from_zn(result))))
         },
         FoldedLiteral::Log2(ref folded_literal) => {
-            let as_float = reduce_fl(folded_literal)?.0 as f32;
+            let as_float = reduce_fl(folded_literal, global_constants)?.0 as f32;
             if as_float <= 0.0 {
-                Some((0, FlagSet::from_zn(0).o()))
+                Some((0, Some(FlagSet::from_zn(0).o())))
             } else {
                 let result = (as_float.log2().floor() as i64) as u8;
-                Some((result, FlagSet::from_zn(result)))
+                Some((result, Some(FlagSet::from_zn(result))))
             }
+        },
+        FoldedLiteral::Exp2(ref folded_literal) => {
+            let arg1 = reduce_fl(folded_literal, global_constants)?.0 as u8;
+            let result = 2_u8.pow((arg1 % 8).into());
+            let mut fs = FlagSet::from_zn(result);
+            if arg1 >= 8 {
+                fs.o = true;
+            };
+            Some((result, Some(fs)))
         }
         FoldedLiteral::Increment(ref folded_literal) => {
-            let arg1 = reduce_fl(folded_literal)?.0 as u16;
+            let arg1 = reduce_fl(folded_literal, global_constants)?.0 as u16;
             let arg2 = 1 as u16;
             let sum = arg1 + arg2;
             let mut fs = FlagSet::from_zn(sum as u8);
@@ -1661,10 +2057,10 @@ pub fn reduce_fl(fl: &FoldedLiteral) -> Option<(u8, FlagSet)> {
             if arg1_is_negative == arg2_is_negative && arg1_is_negative != sum_is_negative {
                 fs.o = true
             }
-            Some((sum as u8, fs))
+            Some((sum as u8, Some(fs)))
         }
         FoldedLiteral::Decrement(ref folded_literal) => {
-            let arg1 = reduce_fl(folded_literal)?.0 as u16;
+            let arg1 = reduce_fl(folded_literal, global_constants)?.0 as u16;
             let arg2 = 1 as u16;
             let sum = (arg1 as u16) + (!arg2 as u16) + 1;
             let mut fs = FlagSet::from_zn(sum as u8);
@@ -1677,10 +2073,10 @@ pub fn reduce_fl(fl: &FoldedLiteral) -> Option<(u8, FlagSet)> {
             if arg1_is_negative != arg2_is_negative && arg1_is_negative != sum_is_negative {
                 fs.o = true
             }
-            Some((sum as u8, fs))
+            Some((sum as u8, Some(fs)))
         }
         FoldedLiteral::TwosComplement(ref folded_literal) => {
-            let arg1 = reduce_fl(folded_literal)?.0 as u16;
+            let arg1 = reduce_fl(folded_literal, global_constants)?.0 as u16;
             let result = (!arg1 as u16) + 1;
             let mut fs = FlagSet::from_zn(result as u8);
             if (result & 256) != 0 {
@@ -1689,11 +2085,11 @@ pub fn reduce_fl(fl: &FoldedLiteral) -> Option<(u8, FlagSet)> {
             if arg1 == 128 {
                 fs.o = true;
             }
-            Some((result as u8, fs))
+            Some((result as u8, Some(fs)))
         }
         FoldedLiteral::Add(ref folded_literal, ref folded_literal1) => {
-            let arg1 = reduce_fl(folded_literal)?.0 as u16;
-            let arg2 = reduce_fl(folded_literal1)?.0 as u16;
+            let arg1 = reduce_fl(folded_literal, global_constants)?.0 as u16;
+            let arg2 = reduce_fl(folded_literal1, global_constants)?.0 as u16;
             let sum = arg1 + arg2;
             let mut fs = FlagSet::from_zn(sum as u8);
             if (sum & 256) != 0 {
@@ -1705,12 +2101,12 @@ pub fn reduce_fl(fl: &FoldedLiteral) -> Option<(u8, FlagSet)> {
             if arg1_is_negative == arg2_is_negative && arg1_is_negative != sum_is_negative {
                 fs.o = true
             }
-            Some((sum as u8, fs))
+            Some((sum as u8, Some(fs)))
 
         },
         FoldedLiteral::Subtract(ref folded_literal, ref folded_literal1) => {
-            let arg1 = reduce_fl(folded_literal)?.0;
-            let arg2 = reduce_fl(folded_literal1)?.0;
+            let arg1 = reduce_fl(folded_literal, global_constants)?.0;
+            let arg2 = reduce_fl(folded_literal1, global_constants)?.0;
             let sum = (arg1 as u16) + (!arg2 as u16) + 1;
             let mut fs = FlagSet::from_zn(sum as u8);
             if (sum & 256) != 0 {
@@ -1722,45 +2118,45 @@ pub fn reduce_fl(fl: &FoldedLiteral) -> Option<(u8, FlagSet)> {
             if arg1_is_negative != arg2_is_negative && arg1_is_negative != sum_is_negative {
                 fs.o = true
             }
-            Some((sum as u8, fs))
+            Some((sum as u8, Some(fs)))
         },
         FoldedLiteral::Multiply(ref folded_literal, ref folded_literal1) => {
-            let product = (reduce_fl(folded_literal)?.0 as u16 * reduce_fl(folded_literal1)?.0 as u16) as u8;
-            Some((product, FlagSet::from_zn(product)))
+            let product = (reduce_fl(folded_literal, global_constants)?.0 as u16 * reduce_fl(folded_literal1, global_constants)?.0 as u16) as u8;
+            Some((product, Some(FlagSet::from_zn(product))))
         },
         FoldedLiteral::Divide(ref folded_literal, ref folded_literal1) => {
-            let arg1 = reduce_fl(folded_literal)?.0;
-            let arg2 = reduce_fl(folded_literal1)?.0;
+            let arg1 = reduce_fl(folded_literal, global_constants)?.0;
+            let arg2 = reduce_fl(folded_literal1, global_constants)?.0;
             if arg2 == 0 {
                 // x/0 = 255, and Overflow flag is set
-                Some((255, FlagSet::from_zn(255).o()))
+                Some((255, Some(FlagSet::from_zn(255).o())))
             } else {
                 let result = arg1 / arg2;
-                Some(((result), FlagSet::from_zn(result)))
+                Some(((result), Some(FlagSet::from_zn(result))))
             }
         },
         FoldedLiteral::Modulo(ref folded_literal, ref folded_literal1) => {
-            let arg1 = reduce_fl(folded_literal)?.0;
-            let arg2 = reduce_fl(folded_literal1)?.0;
+            let arg1 = reduce_fl(folded_literal, global_constants)?.0;
+            let arg2 = reduce_fl(folded_literal1, global_constants)?.0;
             if arg2 == 0 {
                 // x%0 = x, and Overflow flag is set
-                Some((arg1, FlagSet::from_zn(arg1).o()))
+                Some((arg1, Some(FlagSet::from_zn(arg1).o())))
             } else {
                 let result = arg1 % arg2;
-                Some(((result), FlagSet::from_zn(result)))
+                Some(((result), Some(FlagSet::from_zn(result))))
             }
         },
         FoldedLiteral::BitwiseXOR(ref folded_literal, ref folded_literal1) => {
-            let result = reduce_fl(folded_literal)?.0 ^ reduce_fl(folded_literal1)?.0;
-            Some(((result), FlagSet::from_zn(result)))
+            let result = reduce_fl(folded_literal, global_constants)?.0 ^ reduce_fl(folded_literal1, global_constants)?.0;
+            Some(((result), Some(FlagSet::from_zn(result))))
         },
         FoldedLiteral::BitwiseAND(ref folded_literal, ref folded_literal1) => {
-            let result = reduce_fl(folded_literal)?.0 & reduce_fl(folded_literal1)?.0;
-            Some(((result), FlagSet::from_zn(result)))
+            let result = reduce_fl(folded_literal, global_constants)?.0 & reduce_fl(folded_literal1, global_constants)?.0;
+            Some(((result), Some(FlagSet::from_zn(result))))
         },
         FoldedLiteral::BitwiseOR(ref folded_literal, ref folded_literal1) => {
-            let result = reduce_fl(folded_literal)?.0 | reduce_fl(folded_literal1)?.0;
-            Some(((result), FlagSet::from_zn(result)))
+            let result = reduce_fl(folded_literal, global_constants)?.0 | reduce_fl(folded_literal1, global_constants)?.0;
+            Some(((result), Some(FlagSet::from_zn(result))))
         }
     }
 }
@@ -1839,11 +2235,10 @@ fn hash_of_stmt_arg(arg: &StmtArg, loc: CodeLocation, rd: &HashMap<VarID, Vec<De
     match arg {
         StmtArg::Literal(_) |
         StmtArg::LocationOfVariable(_) |
-        StmtArg::Constant(_) |
         StmtArg::FoldedLiteral(_) => {
             Ok(calculate_hash(arg))
         }
-
+        
         StmtArg::Variable(var_id) => {
             let defns = match rd.get(var_id) {
                 Some(defns) => defns,
@@ -1855,6 +2250,7 @@ fn hash_of_stmt_arg(arg: &StmtArg, loc: CodeLocation, rd: &HashMap<VarID, Vec<De
             sorted_defns.sort();
             Ok(calculate_hash(&(arg, sorted_defns)))
         },
+        StmtArg::ROMPointer(pointer_arg, arr_var_id) |
         StmtArg::RAMPointer(pointer_arg, arr_var_id) => {
             let pointer_hash = hash_of_stmt_arg(pointer_arg, loc, rd)?;
             let defns = match rd.get(arr_var_id) {
@@ -1884,6 +2280,7 @@ fn is_alu_instruction(stmt: &Stmt) -> bool {
             Nullary::UpdateScreen |
             Nullary::Wait |
             Nullary::GetInput |
+            Nullary::InitializeArray |
             Nullary::Stop => false
         },
         StmtKind::Unary(unary) => match unary {
@@ -1893,6 +2290,7 @@ fn is_alu_instruction(stmt: &Stmt) -> bool {
             Unary::TwosComplement |
             Unary::Compare |
             Unary::BitwiseNOT |
+            Unary::Exp2 |
             Unary::Log2 => true
         },
         StmtKind::Binary(binary) => match binary {

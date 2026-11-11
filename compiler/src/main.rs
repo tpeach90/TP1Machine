@@ -1,10 +1,10 @@
 
 mod tokens;
-use std::{env, fs, process::ExitCode};
+use std::{env, eprint, fs, process::ExitCode};
 
 use argparse::{ArgumentParser, StoreTrue, Store, StoreOption};
 
-use crate::{irgen::{SemanticError, gen_program}, lexer::{LexError, extract_tokens}, optimize::{OptimizationError, optimize}, parser::{ParseError, Parser}, tokens::TokenDetail};
+use crate::{io::format_error, irgen::{SemanticError, gen_program}, lexer::{LexError, extract_tokens}, optimize::{OptimizationError, optimize}, parser::{ParseError, Parser}, tokens::TokenDetail};
 
 mod ast;
 mod common;
@@ -13,6 +13,7 @@ mod lexer;
 mod ir;
 mod irgen;
 mod optimize;
+mod io;
 
 fn main() -> ExitCode {
 
@@ -44,10 +45,10 @@ fn main() -> ExitCode {
     };
 
     // lex
-    let tokens = match extract_tokens(input) {
+    let tokens = match extract_tokens(&input) {
         Ok(tokens) => tokens,
         Err(LexError { loc, message }) => {
-            eprintln!("Lex error: {}-{}: {}", loc.start_index, loc.end_index, message);
+            eprintln!("{}", format_error(&input, loc, "Lexer error", &message));
             return 1.into();
         }
     };
@@ -69,7 +70,7 @@ fn main() -> ExitCode {
     let parsed = match parser.parse_program() {
         Ok(node) => node,
         Err(ParseError{loc, message}) => {
-            eprintln!("Parse error: {}-{}: {}", loc.start_index, loc.end_index, message);
+            eprintln!("{}", format_error(&input, loc, "Parse error", &message));
             return 1.into();
         }
     };
@@ -82,7 +83,7 @@ fn main() -> ExitCode {
     let mut ir = match gen_program(&parsed) {
         Ok(ir) => ir,
         Err(SemanticError{loc, message}) => {
-            eprintln!("Semantic error: {}-{}: {}", loc.start_index, loc.end_index, message);
+            eprintln!("{}", format_error(&input, loc, "Semantic error", &message));
             return 1.into();
         }
     };
@@ -91,7 +92,7 @@ fn main() -> ExitCode {
     match optimize(&mut ir) {
         Ok(_) => (),
         Err(OptimizationError{loc, message}) => {
-            eprintln!("Optimization error: {}-{}: {}", loc.start_index, loc.end_index, message);
+            eprintln!("{}", format_error(&input, loc, "Optimization error", &message));
             return 1.into();
         }
     }

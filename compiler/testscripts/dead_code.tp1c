@@ -1,0 +1,12 @@
+
+
+main {
+
+    let byte pigsCanFly = 0;
+    if (pigsCanFly) {
+        ramWrite(-8, 100);
+    } else {
+        ramWrite(-8, 0);
+    };
+    
+}

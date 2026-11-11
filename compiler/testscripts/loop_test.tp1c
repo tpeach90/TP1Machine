@@ -1,0 +1,11 @@
+
+main {
+    let byte total = 0;
+    let byte i = 1;
+    do {
+        total = total + i;
+        i = i + 1;
+    } while (i <= 10);
+    ramWrite(-8, total);
+    updateScreen();
+}

@@ -140,8 +140,7 @@ impl Parser <'_> {
             TokenDetail::Operator(Operator::Minus) |
             TokenDetail::Number(_) |
             TokenDetail::Operator(Operator::Tilde) | 
-            TokenDetail::Operator(Operator::Exclaimation) | 
-            TokenDetail::Operator(Operator::Underscore) => {
+            TokenDetail::Operator(Operator::Exclaimation) => {
                 self.parse_expression_statement()
             }
 
@@ -433,9 +432,7 @@ impl Parser <'_> {
             let combined_location = CodeLocation{start_index: lhs.loc.start_index, end_index: rhs.loc.end_index};
             let combined_expression_detail = match op1 {
                 Operator::Exclaimation |
-                Operator::Tilde |
-                // Operator::Arobase |
-                Operator::Underscore => Err(ParseError{loc: op1_token.loc, message:format!("{} is not a binary operator", op1_token.text)}),
+                Operator::Tilde => Err(ParseError{loc: op1_token.loc, message:format!("{} is not a binary operator", op1_token.text)}),
                 
                 Operator::Plus => Ok(ExpressionDetail::Add { left: lhs, right: rhs }),
                 Operator::Minus => Ok(ExpressionDetail::Subtract { left: lhs, right: rhs }),
@@ -515,8 +512,7 @@ impl Parser <'_> {
 
             // unary operators
             TokenDetail::Operator(Operator::Tilde) | 
-            TokenDetail::Operator(Operator::Exclaimation) | 
-            TokenDetail::Operator(Operator::Underscore) => self.parse_unary(),
+            TokenDetail::Operator(Operator::Exclaimation)  => self.parse_unary(),
             
 
 
@@ -606,6 +602,7 @@ impl Parser <'_> {
         }
         let lookahead2 = self.advance_token();
         if matches!(lookahead2.t, TokenDetail::RightBrace) {
+            self.advance_token();
             Ok(Box::new(ExpressionNode { loc: CodeLocation { start_index: lookahead.loc.start_index, end_index: lookahead2.loc.end_index }, d: ExpressionDetail::Array { val: vec![] } , type_annotation: RefCell::new(None)}))
         } else {
             let mut array_contents = vec![self.parse_expression()?];
@@ -633,7 +630,7 @@ impl Parser <'_> {
         match lookahead.t {
             TokenDetail::Operator(Operator::Tilde) => Ok(Box::new(ExpressionNode { loc: unary_expr_loc, d: ExpressionDetail::BitwiseNOT { val: node } , type_annotation: RefCell::new(None)})),
             TokenDetail::Operator(Operator::Exclaimation) => Ok(Box::new(ExpressionNode { loc: unary_expr_loc, d: ExpressionDetail::LogicalNOT { val: node } , type_annotation: RefCell::new(None)})),
-            TokenDetail::Operator(Operator::Underscore) => Ok(Box::new(ExpressionNode { loc: unary_expr_loc, d: ExpressionDetail::Log2 { val: node }, type_annotation: RefCell::new(None) })),
+            // TokenDetail::Operator(Operator::Underscore) => Ok(Box::new(ExpressionNode { loc: unary_expr_loc, d: ExpressionDetail::Log2 { val: node }, type_annotation: RefCell::new(None) })),
             _ => Err(ParseError { loc: lookahead.loc, message: "Expected a unary operator".to_string() })
         }
     }
@@ -675,9 +672,8 @@ fn binary_precedence(op: &Operator) -> usize {
         
         // unary ops not relevant
         Operator::Exclaimation |
-        Operator::Tilde |
-        // Operator::Arobase |
-        Operator::Underscore => 0,
+        Operator::Tilde => 0,
+            
         
         Operator::Asterix | // multiply
         Operator::ForwardSlash | // divide
@@ -713,8 +709,7 @@ fn binary_precedence(op: &Operator) -> usize {
 fn is_maybe_binary(op: &Operator) -> bool {
     match op {
         Operator::Tilde |
-        Operator::Exclaimation |
-        Operator::Underscore => false,
+        Operator::Exclaimation => false,
         
         Operator::Plus |
         Operator::Minus |

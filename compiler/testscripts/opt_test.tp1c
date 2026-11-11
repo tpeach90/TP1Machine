@@ -1,0 +1,7 @@
+let const byte startOfScreen = -8;
+
+main {
+    let byte lol = (1 + 1) + (1 + 1);
+    ramWrite(startOfScreen, lol);
+    updateScreen();
+}

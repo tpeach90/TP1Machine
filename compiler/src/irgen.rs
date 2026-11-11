@@ -1,4 +1,12 @@
 
+/*TODO
+
+Add an InitializeArray nullary op
+Change RamWrite to include the array var_id in the args. Probably replace arg1 with a RAMPointer.
+
+Also We seem to have "Copy 0" in some cases instead of "RAMWrite @.., 0". Fix that */
+
+
 use std::{cmp::min, collections::HashMap, iter::zip, vec};
 
 // major todo: implement const ROM variables
@@ -178,6 +186,7 @@ impl IRBuilder {
                 Nullary::UpdateScreen |
                 Nullary::Wait |
                 Nullary::GetInput |
+                Nullary::InitializeArray |
                 Nullary::Stop => false,
             },
             StmtKind::Unary(unary) => match unary {
@@ -187,6 +196,7 @@ impl IRBuilder {
                 Unary::TwosComplement |
                 Unary::Compare |
                 Unary::BitwiseNOT |
+                Unary::Exp2 |
                 Unary::Log2 => true,
             },
             StmtKind::Binary(binary) => match binary {
@@ -222,11 +232,11 @@ impl IRBuilder {
         self.ir.basic_blocks[self.curr_block].continue_to = continue_to;
     }
 
-    fn add_global_constant(&mut self, ident: &str, value: Vec<u8>) -> VarID {
+    fn add_global_constant(&mut self, ident: &str, r#type: Type, value: Vec<u8>) -> VarID {
         let id = self.var_id_counter;
         self.var_id_counter += 1;
         self.ir.id_to_ident.insert(id, ident.to_owned());
-        self.ir.global_constants.insert(id, value);
+        self.ir.global_constants.insert(id, (r#type, value));
         return id;
     }
 
@@ -253,6 +263,9 @@ pub enum Function {
     Input,
     UpdateScreen,
     RAMWrite,
+    Log,
+    Exp,
+    Stop
 }
 
 pub fn ident_to_function(ident: &str) -> Option<Function> {
@@ -262,6 +275,9 @@ pub fn ident_to_function(ident: &str) -> Option<Function> {
         "input" => Some(Function::Input),
         "updateScreen" => Some(Function::UpdateScreen),
         "ramWrite" => Some(Function::RAMWrite),
+        "log" => Some(Function::Log),
+        "exp" => Some(Function::Exp),
+        "stop" => Some(Function::Stop),
         _ => None
     }
 }
@@ -291,6 +307,18 @@ pub fn function_to_signature(function: &Function) -> FunctionSignature {
         },
         Function::RAMWrite => FunctionSignature{
             num_args: 2,
+            return_type: Type { nesting: vec![]}
+        },
+        Function::Log => FunctionSignature{
+            num_args: 1,
+            return_type: Type { nesting: vec![]}
+        },
+        Function::Exp => FunctionSignature{
+            num_args: 1,
+            return_type: Type { nesting: vec![]}
+        },
+        Function::Stop => FunctionSignature{
+            num_args: 0,
             return_type: Type { nesting: vec![]}
         },
         
@@ -328,20 +356,20 @@ pub fn gen_program(node: &ProgramNode) -> Result<IntermediateRepresentation, Sem
                     return Err(SemanticError{loc: val.loc, message: format!("Mismatching types: expected {} got {}", expected_type, actual_type)});
                 }
 
-                // if constant is a single byte, just add it as a variable. copy propagation will substitute it in where it is needed.
-                let id = if actual_type.depth() == 0 {
-                    let id = builder.new_variable(actual_type.size(), identifier);
-                    builder.insert_statement(Stmt::new(
-                        StmtKind::Unary(Unary::Copy),
-                        Some(StmtArg::Literal(flatten_constant(val)[0])),
-                        None,
-                        Some(id),
-                        stmt.loc
-                    ));
-                    id
-                } else {
-                    builder.add_global_constant(&identifier, flatten_constant(val))
-                };
+                // // if constant is a single byte, just add it as a variable. copy propagation will substitute it in where it is needed.
+                // let id = if actual_type.depth() == 0 {
+                //     let id = builder.new_variable(actual_type.size(), identifier);
+                //     builder.insert_statement(Stmt::new(
+                //         StmtKind::Unary(Unary::Copy),
+                //         Some(StmtArg::Literal(flatten_constant(val)[0])),
+                //         None,
+                //         Some(id),
+                //         stmt.loc
+                //     ));
+                //     id
+                // } else {
+                let id = builder.add_global_constant(&identifier, expected_type.clone(), flatten_constant(val));
+                // };
 
                 context.add_declaration(identifier, SymbolInfo { id, r#type: expected_type });
             },
@@ -445,29 +473,54 @@ fn gen_inner_statement(node: &Box<InnerStatementNode>, builder: &mut IRBuilder, 
         InnerStatementDetail::DeclarationStatement { r#type, identifier } => {
             let parsed_type = r#type.get_type(context)?;
             let var_id = builder.new_variable(parsed_type.size(), identifier);
+            if parsed_type.depth() > 0 {
+                builder.insert_statement(Stmt::new(
+                    // arr = InitializeArray
+                    StmtKind::Nullary(Nullary::InitializeArray),
+                    None,
+                    None,
+                    Some(var_id),
+                    r#type.loc
+                ));
+            }
             context.add_declaration(identifier, SymbolInfo { id: var_id, r#type: parsed_type });
             Ok(())
         }
         InnerStatementDetail::DeclarationStatementWithInitialValue { r#type, identifier, val } => {
             let parsed_type = r#type.get_type(context)?;
             let var_id = builder.new_variable(parsed_type.size(), identifier);
+            if parsed_type.depth() > 0 {
+                builder.insert_statement(Stmt::new(
+                    // arr = InitializeArray
+                    StmtKind::Nullary(Nullary::InitializeArray),
+                    None,
+                    None,
+                    Some(var_id),
+                    r#type.loc
+                ));
+            }
             context.add_declaration(identifier, SymbolInfo { id: var_id, r#type: parsed_type.clone() });
             gen_fill_from_expression(val, &parsed_type, None, var_id, builder, context)?;
             Ok(())
         },
         InnerStatementDetail::AssignmentStatement { lvalue, rvalue } => {
             let (var_id, offset, r#type) = gen_get_memory_variable_offset_and_type(lvalue, builder, context)?;
+            // check not trying to assign to a constant
+            if builder.ir.global_constants.contains_key(&var_id) {
+                return Err(SemanticError { loc: lvalue.loc, message: "Cannot write to constant".to_string() })
+            }
             let dest_ptr = match offset {
                 Some(offset) => {
+                    let absolute_pos = builder.new_nameless_variable(1);
                     builder.insert_statement(Stmt::new(
-                        // offset += location of destination variable
+                        // absolute_pos = offset + location of destination variable
                         StmtKind::Binary(Binary::Add),
                         Some(StmtArg::Variable(offset)),
                         Some(StmtArg::LocationOfVariable(var_id)),
-                        Some(offset),
+                        Some(absolute_pos),
                         lvalue.loc
                     ));
-                    Some(offset)
+                    Some(absolute_pos)
                 },
                 None => None,
             };
@@ -524,6 +577,11 @@ fn gen_condition(condition: &Box<ConditionNode>, builder: &mut IRBuilder, contex
 
 fn gen_fill_from_expression(node: &Box<ExpressionNode>, dest_type: &Type, dest_ptr: Option<VarID>, dest: VarID, builder: &mut IRBuilder, context: &mut Context ) -> Result<(), SemanticError> {
 
+    // check that we can actually write to the destination
+    if builder.ir.global_constants.contains_key(&dest) {
+        return Err(SemanticError { loc: node.loc, message: "Cannot write to constant".to_string() });
+    }
+
     match &node.d {
 
         ExpressionDetail::Array { val: children } => {
@@ -533,15 +591,28 @@ fn gen_fill_from_expression(node: &Box<ExpressionNode>, dest_type: &Type, dest_p
             // but as long as the depth is the same it's fine
             // we just skip indeces in the source or destination arrays when necessary
 
-            let actual_type = node.get_type(context)?;
+            let mut actual_type = node.get_type(context)?;
+            // if nesting innermost size is 0, the the innermost layers were not able to be determined.
+            // ie if the user writes something like this:
+            // let [1][2][3]byte myVar = {{}, {}, {}};
+            // then the rhs type will be parsed as [0][3]byte,
+            // but the LHS could also be [0][0][3]byte.
+            // In these cases, expand the type until depth is the same as the expected.
+            if actual_type.depth() < dest_type.depth() &&
+                actual_type.nesting.last().is_some_and(|last| *last == 0) 
+            {
+                for _ in 0..(dest_type.depth() - actual_type.depth()) {
+                    actual_type.nesting.push(0);
+                }
+            }
             if actual_type.depth() != dest_type.depth() {
-                return Err(SemanticError { loc: node.loc, message: format!("Expected type {}, got {}", dest_type, actual_type) });
+                return Err(SemanticError { loc: node.loc, message: format!("Expected type of depth {}, got {} (depth {})", dest_type.depth(), actual_type, actual_type.depth()) });
             }
 
             // create a pointer if necessary
             let ptr = match dest_ptr {
                 Some(ptr) => Some(ptr),
-                None => if actual_type.size() == 1 {
+                None => if actual_type.depth() == 0 {
                     None
                 } else {
                     let ptr = builder.new_nameless_variable(1);
@@ -581,7 +652,7 @@ fn gen_fill_from_expression(node: &Box<ExpressionNode>, dest_type: &Type, dest_p
                 // we may be inside a nested array definition, so increase the pointer at the end so we stay in line with the flattened array.
                 if children.len() != 0 {
                     for (i, child) in enumerate(children) {
-                        gen_fill_from_expression(child, &dest_inner_type, dest_ptr, dest, builder, context)?;
+                        gen_fill_from_expression(child, &dest_inner_type, ptr, dest, builder, context)?;
                         // don't increment the pointer in the last iteration
                         if i < children.len() - 1 {
                             match ptr {
@@ -664,7 +735,8 @@ fn gen_fill_from_expression(node: &Box<ExpressionNode>, dest_type: &Type, dest_p
                     builder.insert_statement(Stmt::new(
                         // [ptr] = t
                         StmtKind::Binary(Binary::RAMWrite),
-                        Some(StmtArg::Variable(ptr)),
+                        Some(StmtArg::RAMPointer(Box::from(StmtArg::Variable(ptr)), dest)),
+                        // Some(StmtArg::Variable(ptr)),
                         Some(StmtArg::Variable(t)),
                         Some(dest),
                         node.loc,
@@ -850,7 +922,7 @@ fn gen_expression_as_boolean(node: &Box<ExpressionNode>, block_if_true: BlockPoi
             let result = gen_expression_to_temporary(node, &BYTE, builder, context)?;
             builder.insert_statement(Stmt::new(
                 // do nothing with result - just set ALU flags.
-                StmtKind::Unary(Unary::Copy),
+                StmtKind::Unary(Unary::Compare),
                 Some(StmtArg::Variable(result)),
                 None,
                 None,
@@ -943,6 +1015,12 @@ fn gen_expression_as_boolean(node: &Box<ExpressionNode>, block_if_true: BlockPoi
  * expected_type refers to the type of the data that is being written (not necessarily that of the entire destination variable, if there is an offset)
  */
 fn gen_fill_from_memory_value(node: &Box<MemoryLocationNode>, destination: VarID, src_offset: Option<VarID>, dest_ptr: Option<VarID>, dest_type: &Type, source_stripped_layers: usize, builder: &mut IRBuilder, context: &mut Context) -> Result<(), SemanticError> {
+
+    // check that we can actually write to the destination
+    if builder.ir.global_constants.contains_key(&destination) {
+        return Err(SemanticError { loc: node.loc, message: "Cannot write to constant".to_string() });
+    }
+
     let actual_type = node.get_type(context)?;
     if actual_type.depth() - source_stripped_layers != dest_type.depth() {
         return Err(SemanticError { loc: node.loc, message: format!("Expected a type of depth {}, got {} (depth {})", dest_type.depth(), actual_type, actual_type.depth()) });
@@ -954,15 +1032,16 @@ fn gen_fill_from_memory_value(node: &Box<MemoryLocationNode>, destination: VarID
                 Some(info) => {
                     let src_ptr = match src_offset {
                         Some(offset) => {
+                            let absolute_pos = builder.new_nameless_variable(1);
                             builder.insert_statement(Stmt::new(
-                                // offset += start of source array
+                                // absolute_pos = offset + start of source array
                                 StmtKind::Binary(Binary::Add),
                                 Some(StmtArg::Variable(offset)),
                                 Some(StmtArg::LocationOfVariable(info.id)),
-                                Some(offset),
+                                Some(absolute_pos),
                                 node.loc
                             ));
-                            Some(offset)
+                            Some(absolute_pos)
                         },
                         None => None
                     };
@@ -983,26 +1062,28 @@ fn gen_fill_from_memory_value(node: &Box<MemoryLocationNode>, destination: VarID
             // unwraps won't cause panic because actual_type was already able to be calculated
             // meaning it was already deemed valid to index into arr
             let inner_type = arr.get_type(context)?.inner().unwrap();
-            let offset_from_this_layer = gen_expression_to_temporary(i, &BYTE, builder, context)?;
+            let index_in_this_layer = gen_expression_to_temporary(i, &BYTE, builder, context)?;
+            let offset_from_this_layer = builder.new_nameless_variable(1);
             builder.insert_statement(Stmt::new(
-                // offset_from_this_layer *= inner_type.size()
+                // offset_from_this_layer = index_in_this_layer * inner_type.size()
                 StmtKind::Binary(Binary::Multiply),
-                Some(StmtArg::Variable(offset_from_this_layer)),
+                Some(StmtArg::Variable(index_in_this_layer)),
                 Some(StmtArg::Literal(inner_type.size() as u8)),
                 Some(offset_from_this_layer),
                 node.loc
             ));
             let offset = match src_offset {
-                Some(offset) => {
+                Some(parent_offset) => {
+                    let combined_offset = builder.new_nameless_variable(1);
                     builder.insert_statement(Stmt::new(
                         // offset += offset_from_this_layer
                         StmtKind::Binary(Binary::Add),
-                        Some(StmtArg::Variable(offset)),
+                        Some(StmtArg::Variable(parent_offset)),
                         Some(StmtArg::Variable(offset_from_this_layer)),
-                        Some(offset),
+                        Some(combined_offset),
                         node.loc
                     ));
-                    offset
+                    combined_offset
                 },
                 None => {
                     offset_from_this_layer
@@ -1028,15 +1109,16 @@ fn gen_get_memory_value(node: &Box<MemoryLocationNode>, expected_type: &Type, bu
     // if has an offset, add the start of the array bound
     let source_ptr = match offset {
         Some(offset) => {
-            // offset += @source
+            // absolute_pos = offset + @source
+            let absolute_pos = builder.new_nameless_variable(1);
             builder.insert_statement(Stmt::new(
                 StmtKind::Binary(Binary::Add),
                 Some(StmtArg::Variable(offset)),
                 Some(StmtArg::LocationOfVariable(source)),
-                Some(offset),
+                Some(absolute_pos),
                 node.loc
             ));
-            Some(offset)
+            Some(absolute_pos)
         }
         None => None
     };
@@ -1060,70 +1142,74 @@ fn gen_get_memory_variable_offset_and_type(node: &Box<MemoryLocationNode>, build
             }
         },
         MemoryLocationDetail::ArrayIndex { i, arr } => {
-            let (var_id, maybe_offset, r#type) = gen_get_memory_variable_offset_and_type(arr, builder, context)?;
+            let (var_id, maybe_inner_offset, r#type) = gen_get_memory_variable_offset_and_type(arr, builder, context)?;
             let inner_type = match r#type.inner() {
                 Some(inner) => inner,
                 None => return Err(SemanticError { loc: node.loc, message: "Cannot index into byte".to_string() })
             };
             let i_eval = gen_expression_to_temporary(i, &BYTE, builder, context)?;
+            let offset_from_this_layer = builder.new_nameless_variable(1);
             builder.insert_statement(Stmt::new(
-                // i *= inner_type.size()
+                // offset_from_this_layer = i * inner_type.size()
                 StmtKind::Binary(Binary::Multiply),
                 Some(StmtArg::Variable(i_eval)),
                 Some(StmtArg::Literal(inner_type.size() as u8)),
-                Some(i_eval),
+                Some(offset_from_this_layer),
                 node.loc
             ));
-            let offset = match maybe_offset {
-                Some(offset) => {
+            let offset = match maybe_inner_offset {
+                Some(inner_offset) => {
+                    let offset = builder.new_nameless_variable(1);
                     builder.insert_statement(Stmt::new(
-                        // offset += i
+                        // offset = offset_from_this_layer + inner_offset
                         StmtKind::Binary(Binary::Add),
-                        Some(StmtArg::Variable(offset)),
-                        Some(StmtArg::Variable(i_eval)),
+                        Some(StmtArg::Variable(offset_from_this_layer)),
+                        Some(StmtArg::Variable(inner_offset)),
                         Some(offset),
                         node.loc
                     ));
                     offset
                 },
                 None => {
-                    // offset = i
-                    i_eval
+                    // offset = offset_from_this_layer
+                    offset_from_this_layer
                 },
             };
             Ok((var_id, Some(offset), inner_type))
         }
         MemoryLocationDetail::ArraySlice { start, arr } => {
             // same as array index except return the whole type instead of the inner type
-            let (var_id, maybe_offset, r#type) = gen_get_memory_variable_offset_and_type(arr, builder, context)?;
+            let (var_id, maybe_inner_offset, r#type) = gen_get_memory_variable_offset_and_type(arr, builder, context)?;
             let inner_type = match r#type.inner() {
                 Some(inner) => inner,
                 None => return Err(SemanticError { loc: node.loc, message: "Cannot slice byte".to_string() })
             };
-            let start_eval = gen_expression_to_temporary(start, &BYTE, builder, context)?;
+            let start_idx_eval = gen_expression_to_temporary(start, &BYTE, builder, context)?;
+            let offset_from_this_layer = builder.new_nameless_variable(1);
             builder.insert_statement(Stmt::new(
-                // start *= inner_type.size()
+                // offset_from_this_layer = start_idx * inner_type.size()
                 StmtKind::Binary(Binary::Multiply),
-                Some(StmtArg::Variable(start_eval)),
+                Some(StmtArg::Variable(start_idx_eval)),
                 Some(StmtArg::Literal(inner_type.size() as u8)),
-                Some(start_eval),
+                Some(offset_from_this_layer),
                 node.loc
             ));
-            let offset = match maybe_offset {
-                Some(offset) => {
+            let offset = match maybe_inner_offset {
+                Some(inner_offset) => {
+                    let offset = builder.new_nameless_variable(1);
                     builder.insert_statement(Stmt::new(
-                        // offset += start
+                        // offset = inner_offset + offset_from_this_layer
                         StmtKind::Binary(Binary::Add),
-                        Some(StmtArg::Variable(offset)),
-                        Some(StmtArg::Variable(start_eval)),
+                        Some(StmtArg::Variable(inner_offset)),
+                        Some(StmtArg::Variable(offset_from_this_layer)),
                         Some(offset),
                         node.loc
                     ));
                     offset
                 },
                 None => {
-                    // offset = start
-                    start_eval
+                    // offset = offset_from_this_layer
+                    offset_from_this_layer
                 },
             };
             Ok((var_id, Some(offset), r#type))
@@ -1131,16 +1217,25 @@ fn gen_get_memory_variable_offset_and_type(node: &Box<MemoryLocationNode>, build
     }
 }
 
+// do source = dest
+// if source_ptr or dest_ptr are specified, then source or dest in the above are placed with RAM or ROM pointer dereferences
 fn gen_copy(source: VarID, dest:VarID, source_ptr: Option<VarID>, dest_ptr: Option<VarID>, source_type: &Type, dest_type: &Type, loc: CodeLocation, builder: &mut IRBuilder, context: &mut Context) -> Result<(), SemanticError> {
+
+    if builder.ir.global_constants.contains_key(&dest) {
+        return Err(SemanticError { loc, message: "Cannot write to global constant".to_string() })
+    }
+
+    let src_global_constant = builder.ir.global_constants.get(&source);
 
     if *dest_type == BYTE {
         // copy single byte
         if *source_type != BYTE {
             return Err(SemanticError { loc, message: format!("Expected byte, got {}", source_type) })
         }
-        match (source_ptr, dest_ptr) {
-            (None, None) => {
+        match (source_ptr, dest_ptr, src_global_constant) {
+            (None, None, None) => {
                 builder.insert_statement(Stmt::new(
+                    // dest = src
                     StmtKind::Unary(Unary::Copy),
                     Some(StmtArg::Variable(source)),
                     None,
@@ -1149,18 +1244,45 @@ fn gen_copy(source: VarID, dest:VarID, source_ptr: Option<VarID>, dest_ptr: Opti
                 ));
                 Ok(())
             },
-            (None, Some(d_ptr)) => {
+            (None, None, Some((_, value))) => {
+                let val = value.get(0).ok_or(SemanticError{loc, message: "Array index 0 out of bounds".to_string()})?;
                 builder.insert_statement(Stmt::new(
+                    // dest = val
+                    StmtKind::Unary(Unary::Copy),
+                    Some(StmtArg::Literal(*val)),
+                    None,
+                    Some(dest),
+                    loc
+                ));
+                Ok(())
+            },
+            (None, Some(d_ptr), None) => {
+                builder.insert_statement(Stmt::new(
+                    // dest[dest_ptr] = source
                     StmtKind::Binary(Binary::RAMWrite),
-                    Some(StmtArg::Variable(d_ptr)),
+                    Some(StmtArg::RAMPointer(Box::from(StmtArg::Variable(d_ptr)), dest)),
+                    // Some(StmtArg::Variable(d_ptr)),
                     Some(StmtArg::Variable(source)),
                     Some(dest),
                     loc
                 ));
                 Ok(())
             },
-            (Some(s_ptr), None) => {
+            (None, Some(d_ptr), Some((_, value))) => {
+                let val = value.get(0).ok_or(SemanticError{loc, message: "Array index 0 out of bounds".to_string()})?;
                 builder.insert_statement(Stmt::new(
+                    // dest[dest_ptr] = val
+                    StmtKind::Binary(Binary::RAMWrite),
+                    Some(StmtArg::RAMPointer(Box::from(StmtArg::Variable(d_ptr)), dest)),
+                    Some(StmtArg::Literal(*val)),
+                    Some(dest),
+                    loc
+                ));
+                Ok(())
+            },
+            (Some(s_ptr), None, None) => {
+                builder.insert_statement(Stmt::new(
+                    // dest = source[source_ptr]
                     StmtKind::Unary(Unary::Copy),
                     Some(StmtArg::RAMPointer(Box::new(StmtArg::Variable(s_ptr)), source)),
                     None,
@@ -1169,11 +1291,34 @@ fn gen_copy(source: VarID, dest:VarID, source_ptr: Option<VarID>, dest_ptr: Opti
                 ));
                 Ok(())
             },
-            (Some(s_ptr), Some(d_ptr)) => {
+            (Some(s_ptr), None, Some(_)) => {
                 builder.insert_statement(Stmt::new(
+                    // dest = source{source_ptr} (rom const)
+                    StmtKind::Unary(Unary::Copy),
+                    Some(StmtArg::ROMPointer(Box::new(StmtArg::Variable(s_ptr)), source)),
+                    None,
+                    Some(dest),
+                    loc
+                ));
+                Ok(())
+            },
+            (Some(s_ptr), Some(d_ptr), None) => {
+                builder.insert_statement(Stmt::new(
+                    // dest[dest_ptr] = source[source_ptr]
                     StmtKind::Binary(Binary::RAMWrite),
-                    Some(StmtArg::Variable(d_ptr)),
+                    Some(StmtArg::RAMPointer(Box::from(StmtArg::Variable(d_ptr)), dest)),
                     Some(StmtArg::RAMPointer(Box::new(StmtArg::Variable(s_ptr)), source)),
+                    Some(dest),
+                    loc
+                ));
+                Ok(())
+            },
+            (Some(s_ptr), Some(d_ptr), Some(_)) => {
+                builder.insert_statement(Stmt::new(
+                    // dest[dest_ptr] = source{source_ptr}
+                    StmtKind::Binary(Binary::RAMWrite),
+                    Some(StmtArg::RAMPointer(Box::from(StmtArg::Variable(d_ptr)), dest)),
+                    Some(StmtArg::ROMPointer(Box::new(StmtArg::Variable(s_ptr)), source)),
                     Some(dest),
                     loc
                 ));
@@ -1219,11 +1364,25 @@ fn gen_copy(source: VarID, dest:VarID, source_ptr: Option<VarID>, dest_ptr: Opti
 }
 
 fn gen_copy_array(source: VarID, dest: VarID, source_type: &Type, dest_type: &Type, loc: CodeLocation, builder: &mut IRBuilder, context: &mut Context) -> Result<(), SemanticError> {
+
+    if builder.ir.global_constants.contains_key(&dest) {
+        return Err(SemanticError { loc, message: "Cannot write to global constant".to_string() })
+    }
+
     if source_type.depth() == 0 && dest_type.depth() == 0 {
+        // check ram or rom
+        let arg1 = match builder.ir.global_constants.get(&source) {
+            Some((_, value)) => {
+                StmtArg::Literal(*value.get(0).ok_or(SemanticError{loc, message: "Array index 0 out of bounds".to_string()})?)
+            },
+            None => {
+                StmtArg::Variable(source)
+            }
+        };
         // byte
         builder.insert_statement(Stmt::new(
             StmtKind::Unary(Unary::Copy),
-            Some(StmtArg::Variable(source)),
+            Some(arg1),
             None,
             Some(dest),
             loc
@@ -1256,16 +1415,19 @@ fn gen_copy_array(source: VarID, dest: VarID, source_type: &Type, dest_type: &Ty
 
 fn gen_copy_array_with_pointer_offsets(source: VarID, dest: VarID, source_ptr: VarID, dest_ptr: VarID, source_type: &Type, dest_type: &Type, loc: CodeLocation, builder: &mut IRBuilder, context: &mut Context) -> Result<(), SemanticError> {
 
-    
+    if builder.ir.global_constants.contains_key(&dest) {
+        return Err(SemanticError { loc, message: "Cannot write to constant".to_string() })
+    }
+    let source_is_constant = builder.ir.global_constants.contains_key(&source);
 
     if source_type.depth() != dest_type.depth() {
         return Err(SemanticError { loc: loc, message: format!("Expected an array of depth {}, got {} (depth {})", dest_type.depth(), source_type, source_type.depth()) });
     }
-    gen_copy_array_with_pointer_offsets_2(source, dest, source_ptr, dest_ptr, source_type, dest_type, true, loc, builder, context)
+    gen_copy_array_with_pointer_offsets_2(source, dest, source_ptr, dest_ptr, source_type, dest_type, true, source_is_constant, loc, builder, context)
 
 }
 
-fn gen_copy_array_with_pointer_offsets_2(source: VarID, dest: VarID, source_ptr: VarID, dest_ptr: VarID, source_type: &Type, dest_type: &Type, is_outer_layer: bool, loc: CodeLocation, builder: &mut IRBuilder, context: &mut Context) -> Result<(), SemanticError> {
+fn gen_copy_array_with_pointer_offsets_2(source: VarID, dest: VarID, source_ptr: VarID, dest_ptr: VarID, source_type: &Type, dest_type: &Type, is_outer_layer: bool, source_is_constant: bool, loc: CodeLocation, builder: &mut IRBuilder, context: &mut Context) -> Result<(), SemanticError> {
 
     // pseudocode:
     /*
@@ -1307,6 +1469,7 @@ fn gen_copy_array_with_pointer_offsets_2(source: VarID, dest: VarID, source_ptr:
         }
     } */
 
+    // base case
     if dest_type.depth() == 0 {
         // trivial copy
         let t = builder.new_nameless_variable(1);
@@ -1321,7 +1484,8 @@ fn gen_copy_array_with_pointer_offsets_2(source: VarID, dest: VarID, source_ptr:
         builder.insert_statement(Stmt::new(
             // copy from temporary to destination
             StmtKind::Binary(Binary::RAMWrite),
-            Some(StmtArg::Variable(dest_ptr)),
+            Some(StmtArg::RAMPointer(Box::from(StmtArg::Variable(dest_ptr)), dest)),
+            // Some(StmtArg::Variable(dest_ptr)),
             Some(StmtArg::Variable(t)),
             Some(dest),
             loc
@@ -1359,7 +1523,7 @@ fn gen_copy_array_with_pointer_offsets_2(source: VarID, dest: VarID, source_ptr:
         // copy this number of elements.
         if els_in_outermost == 1 {
             // only copying a single element.
-            gen_copy_array_with_pointer_offsets_2(source, dest, source_ptr, dest_ptr, &source_type.strip_layers(1).unwrap(), &dest_type.strip_layers(1).unwrap(), false, loc, builder, context)?;
+            gen_copy_array_with_pointer_offsets_2(source, dest, source_ptr, dest_ptr, &source_type.strip_layers(1).unwrap(), &dest_type.strip_layers(1).unwrap(), false, source_is_constant, loc, builder, context)?;
 
             if !is_outer_layer {
                 // mop up
@@ -1393,7 +1557,7 @@ fn gen_copy_array_with_pointer_offsets_2(source: VarID, dest: VarID, source_ptr:
                 let loop_start = builder.new_block();
                 let loop_after = builder.new_block();
                 builder.set_insert_point_at_block_end(loop_start);
-                gen_copy_array_with_pointer_offsets_2(source, dest, source_ptr, dest_ptr, &source_type.strip_layers(1).unwrap(), &dest_type.strip_layers(1).unwrap(), false, loc, builder, context)?;
+                gen_copy_array_with_pointer_offsets_2(source, dest, source_ptr, dest_ptr, &source_type.strip_layers(1).unwrap(), &dest_type.strip_layers(1).unwrap(), false, source_is_constant, loc, builder, context)?;
                 let stop_when_dest_ptr_reaches = dest_ptr + els_in_outermost * dest_type.inner().unwrap().size();
                 builder.insert_statement(Stmt::new(
                     // if dest_ptr < stop_when_dest_ptr_reaches goto loop_start
@@ -1419,7 +1583,7 @@ fn gen_copy_array_with_pointer_offsets_2(source: VarID, dest: VarID, source_ptr:
                 let loop_start = builder.new_block();
                 let loop_after = builder.new_block();
                 builder.set_insert_point_at_block_end(loop_start);
-                gen_copy_array_with_pointer_offsets_2(source, dest, source_ptr, dest_ptr, &source_type.strip_layers(1).unwrap(), &dest_type.strip_layers(1).unwrap(), false, loc, builder, context)?;
+                gen_copy_array_with_pointer_offsets_2(source, dest, source_ptr, dest_ptr, &source_type.strip_layers(1).unwrap(), &dest_type.strip_layers(1).unwrap(), false, source_is_constant, loc, builder, context)?;
                 builder.insert_statement(Stmt::new(
                     // i++
                     StmtKind::Unary(Unary::Increment),
@@ -1469,14 +1633,14 @@ fn gen_copy_array_with_pointer_offsets_2(source: VarID, dest: VarID, source_ptr:
         }
     } else /*l >= 1, meaning that the next l layers have the same nesting and can be stepped through with a single pointer, and no mop up needed */ {
         if chunk_count == 1 /*only 1 element to copy */ {
-            gen_copy_array_with_pointer_offsets_2(source, dest, source_ptr, dest_ptr, &source_type.strip_layers(l).unwrap(), &dest_type.strip_layers(l).unwrap(), false, loc, builder, context)?; 
+            gen_copy_array_with_pointer_offsets_2(source, dest, source_ptr, dest_ptr, &source_type.strip_layers(l).unwrap(), &dest_type.strip_layers(l).unwrap(), false, source_is_constant, loc, builder, context)?; 
         } else {
             if is_outer_layer {
                 // use a test on dest_ptr instead of creating a new temporary
                 let loop_start = builder.new_block();
                 let loop_after = builder.new_block();
                 builder.set_insert_point_at_block_end(loop_start);
-                gen_copy_array_with_pointer_offsets_2(source, dest, source_ptr, dest_ptr, &source_type.strip_layers(l).unwrap(), &dest_type.strip_layers(l).unwrap(), false, loc, builder, context)?; 
+                gen_copy_array_with_pointer_offsets_2(source, dest, source_ptr, dest_ptr, &source_type.strip_layers(l).unwrap(), &dest_type.strip_layers(l).unwrap(), false, source_is_constant, loc, builder, context)?; 
                 let stop_when_dest_ptr_reaches = dest_ptr + dest_type.size();
                 builder.insert_statement(Stmt::new(
                     // if dest_ptr < stop_when_dest_ptr_reaches goto loop_start
@@ -1502,7 +1666,7 @@ fn gen_copy_array_with_pointer_offsets_2(source: VarID, dest: VarID, source_ptr:
                 let loop_start = builder.new_block();
                 let loop_after = builder.new_block();
                 builder.set_insert_point_at_block_end(loop_start);
-                gen_copy_array_with_pointer_offsets_2(source, dest, source_ptr, dest_ptr, &source_type.strip_layers(l).unwrap(), &dest_type.strip_layers(l).unwrap(), false, loc, builder, context)?;
+                gen_copy_array_with_pointer_offsets_2(source, dest, source_ptr, dest_ptr, &source_type.strip_layers(l).unwrap(), &dest_type.strip_layers(l).unwrap(), false, source_is_constant, loc, builder, context)?;
                 builder.insert_statement(Stmt::new(
                     // i++
                     StmtKind::Unary(Unary::Increment),
@@ -1533,6 +1697,11 @@ fn gen_copy_array_with_pointer_offsets_2(source: VarID, dest: VarID, source_ptr:
 }
 
 fn gen_fill_from_function_call(function_ident: &String, args: &Vec<Box<ExpressionNode>>, dest_type: &Type, dest_ptr: Option<VarID>, dest: VarID, loc: CodeLocation, builder: &mut IRBuilder, context: &mut Context) -> Result<(), SemanticError> {
+
+    // check that we can actually write to the destination
+    if builder.ir.global_constants.contains_key(&dest) {
+        return Err(SemanticError { loc: loc, message: "Cannot write to constant".to_string() });
+    }
 
     // eval to temporary then copy the result.
     // this is fine because all functions currently return a single BYTE
@@ -1647,6 +1816,46 @@ fn gen_function_call_to_temporary(function_ident: &String, args: &Vec<Box<Expres
                 Some(result),
                 loc
             ));
+        },
+        Function::Log => {
+            let val = gen_expression_to_temporary(args.get(0).unwrap(), expected_type, builder, context)?;
+            builder.insert_statement(Stmt::new(
+                // result = log(val)
+                StmtKind::Unary(Unary::Log2),
+                Some(StmtArg::Variable(val)),
+                None,
+                Some(result),
+                loc
+            ));
+        },
+        Function::Exp => {
+            let val = gen_expression_to_temporary(args.get(0).unwrap(), expected_type, builder, context)?;
+            builder.insert_statement(Stmt::new(
+                // result = log(val)
+                StmtKind::Unary(Unary::Exp2),
+                Some(StmtArg::Variable(val)),
+                None,
+                Some(result),
+                loc
+            ));
+        },
+        Function::Stop => {
+            builder.insert_statement(Stmt::new(
+                // Stop
+                StmtKind::Nullary(Nullary::Stop),
+                None,
+                None,
+                None,
+                loc
+            ));
+            builder.insert_statement(Stmt::new(
+                // result = 0
+                StmtKind::Unary(Unary::Copy),
+                Some(StmtArg::Literal(0)),
+                None,
+                Some(result),
+                loc
+            ));
         }
     }
     Ok(result)
@@ -1676,7 +1885,8 @@ impl Typeable for &Box<ExpressionNode> {
                     },
                     ExpressionDetail::Array { val } => {
                         if val.len() == 0 {
-                            return Err(SemanticError { loc: self.loc, message: "0 length array".to_string() })
+                            // assume nesting depth 1
+                            return Ok(Type { nesting: vec![0] });
                         }
                         let mut child_types = vec![];
                         for child in val {

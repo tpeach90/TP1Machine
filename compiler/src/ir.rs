@@ -3,7 +3,7 @@ use std::{collections::{HashMap, HashSet}, format, vec};
 
 use itertools::enumerate;
 
-use crate::common::{BranchFlag, CodeLocation};
+use crate::{common::{BranchFlag, CodeLocation}, irgen::Type};
 
 pub type VarID = usize;
 pub type DefinitionID = usize;
@@ -11,7 +11,7 @@ pub type DefinitionID = usize;
 pub type BlockPointer = usize;
 
 pub struct IntermediateRepresentation {
-    pub global_constants: HashMap<VarID, Vec<u8>>,
+    pub global_constants: HashMap<VarID, (Type, Vec<u8>)>,
     pub basic_blocks: Vec<BasicBlock>,
     pub id_to_ident: HashMap<VarID, String>,
     pub id_to_size: HashMap<VarID, usize>,
@@ -148,8 +148,12 @@ impl Stmt {
         Stmt { loc, kind, arg1, arg2, result, definition_id: 0}
     }
 
-    pub fn vars_used(&self) -> HashSet<VarID> {
-        let mut vars_used = HashSet::<VarID>::new();
+    pub fn vars_used_set(&self) -> HashSet<VarID> {
+        self.vars_used().into_iter().collect()
+    }
+
+    pub fn vars_used(&self) -> Vec<VarID> {
+        let mut vars_used: Vec<VarID> = vec![];
         match &self.arg1 {
             Some(arg) => vars_used.extend(arg.vars_used()),
             None => (),
@@ -160,6 +164,7 @@ impl Stmt {
         }
         vars_used
     }
+
 }
 
 #[derive(Clone, Hash)]
@@ -176,31 +181,36 @@ pub enum StmtArg {
     Variable(VarID),
     RAMPointer(Box<StmtArg>/*pointer */, VarID/*array within which pointed.*/),
     LocationOfVariable(VarID),
-    Constant(Constant), // reference to rom variable
+    ROMPointer(Box<StmtArg>/*pointer*/, VarID/*constant array within which pointed. */),
+    // Constant(Constant), // reference to rom variable
     FoldedLiteral(Box<FoldedLiteral>)
 }
 impl StmtArg {
     pub fn uses_value_of_var(&self, var: VarID) -> bool {
         match self {
             StmtArg::Variable(var1) => *var1 == var,
+            StmtArg::ROMPointer(stmt_arg, arr) |
             StmtArg::RAMPointer(stmt_arg, arr) => *arr == var || stmt_arg.uses_value_of_var(var),
             StmtArg::Literal(_) |
             StmtArg::LocationOfVariable(_) |
-            StmtArg::Constant(_) |
             StmtArg::FoldedLiteral(_) => false,
         }
     }
 
-    pub fn vars_used(&self) -> HashSet<VarID> {
+    pub fn vars_used_set(&self) -> HashSet<VarID> {
+        self.vars_used().into_iter().collect()
+    }
+
+    pub fn vars_used(&self) -> Vec<VarID> {
         match self {
             StmtArg::Literal(_) |
             StmtArg::LocationOfVariable(_) |
-            StmtArg::Constant(_) |
-            StmtArg::FoldedLiteral(_) => HashSet::new(),
-            StmtArg::Variable(var_id) => HashSet::from([*var_id]),
+            StmtArg::FoldedLiteral(_) => vec![],
+            StmtArg::Variable(var_id) => vec![*var_id],
+            StmtArg::ROMPointer(stmt_arg, var_id) |
             StmtArg::RAMPointer(stmt_arg, var_id) => {
                 let mut vars = stmt_arg.vars_used();
-                vars.insert(*var_id);
+                vars.push(*var_id);
                 vars
             }
         }
@@ -213,8 +223,11 @@ impl StmtArg {
 pub enum FoldedLiteral {
     Literal(u8),
     LocationOfVariable(VarID),
+    ROMDereference(Box<FoldedLiteral>),
+    Compare(Box<FoldedLiteral>),
     BitwiseNOT(Box<FoldedLiteral>),
     Log2(Box<FoldedLiteral>),
+    Exp2(Box<FoldedLiteral>),
     Increment(Box<FoldedLiteral>),
     Decrement(Box<FoldedLiteral>),
     TwosComplement(Box<FoldedLiteral>),
@@ -249,6 +262,7 @@ pub enum Nullary {
     Wait,
     GetInput,
     Stop,
+    InitializeArray,
 }
 
 #[derive(Clone, Copy, Hash, Eq, PartialEq)]
@@ -262,6 +276,7 @@ pub enum Unary {
     Compare,
     BitwiseNOT,
     Log2,
+    Exp2,
 }
 
 #[derive(Clone, Copy, Hash, Eq, PartialEq)]
@@ -321,6 +336,7 @@ fn stmt_to_string(stmt: &Stmt, ir: &IntermediateRepresentation) -> String {
             Nullary::Wait => "Wait",
             Nullary::GetInput => "GetInput",
             Nullary::Stop => "Stop",
+            Nullary::InitializeArray => "InitializeArray"
         },
         StmtKind::Unary(unary) => match unary {
             Unary::Copy => "Copy",
@@ -332,6 +348,7 @@ fn stmt_to_string(stmt: &Stmt, ir: &IntermediateRepresentation) -> String {
             Unary::Compare => "Compare",
             Unary::BitwiseNOT => "BitwiseNOT",
             Unary::Log2 => "Log2",
+            Unary::Exp2 => "Exp2",
         },
         StmtKind::Binary(binary) => match binary {
             Binary::RAMWrite => "RAMWrite",
@@ -399,8 +416,8 @@ fn arg_to_string(stmt_arg: &StmtArg, ir: &IntermediateRepresentation) -> String 
         StmtArg::LocationOfVariable(var_id) => {
             format!("@{}", variable_to_string(var_id, ir))
         }
-        StmtArg::Constant(constant) => {
-            format!("`{}`", variable_to_string(&constant.id, ir))
+        StmtArg::ROMPointer(pointer, array) => {
+            format!("{}{{{}}}", variable_to_string(array, ir), arg_to_string(pointer, ir))
         },
         StmtArg::FoldedLiteral(folded_literal) => {
             folded_literal_to_string(folded_literal, ir)
@@ -410,10 +427,13 @@ fn arg_to_string(stmt_arg: &StmtArg, ir: &IntermediateRepresentation) -> String 
 
 fn folded_literal_to_string(fl: &Box<FoldedLiteral>, ir: &IntermediateRepresentation) -> String {
     let kind = match **fl {
+        FoldedLiteral::ROMDereference(_) => "ROMDereference",
         FoldedLiteral::Literal(_) => "Literal",
+        FoldedLiteral::Compare(_) => "Compare",
         FoldedLiteral::LocationOfVariable(_) => "LocationOfVariable",
         FoldedLiteral::BitwiseNOT(_) => "BitwiseNOT",
         FoldedLiteral::Log2(_) => "Log2",
+        FoldedLiteral::Exp2(_) => "Exp2",
         FoldedLiteral::Add(_, _) => "Add",
         FoldedLiteral::Subtract(_, _) => "Subtract",
         FoldedLiteral::Multiply(_, _) => "Multiply",
@@ -429,13 +449,16 @@ fn folded_literal_to_string(fl: &Box<FoldedLiteral>, ir: &IntermediateRepresenta
     match **fl {
         FoldedLiteral::Literal(l) => 
             format!("`{}`", l),
-        FoldedLiteral::LocationOfVariable(var_id) => 
+            FoldedLiteral::LocationOfVariable(var_id) => 
             format!("@{}", variable_to_string(&var_id, ir)),
+        FoldedLiteral::ROMDereference(ref folded_literal) |
+        FoldedLiteral::Compare(ref folded_literal) |
         FoldedLiteral::Increment(ref folded_literal) |
         FoldedLiteral::Decrement(ref folded_literal) |
         FoldedLiteral::TwosComplement(ref folded_literal) |
         FoldedLiteral::BitwiseNOT(ref folded_literal) |
-        FoldedLiteral::Log2(ref folded_literal) =>
+        FoldedLiteral::Log2(ref folded_literal) |
+        FoldedLiteral::Exp2(ref folded_literal) =>
             format!("{}({})", kind, folded_literal_to_string(&folded_literal, ir)),
         FoldedLiteral::Add(ref folded_literal, ref folded_literal1) |
         FoldedLiteral::Subtract(ref folded_literal, ref folded_literal1) |

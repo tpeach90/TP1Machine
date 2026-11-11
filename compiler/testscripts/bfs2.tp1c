@@ -1,4 +1,3 @@
-let const [8]byte masks = {0b00000001, 0b00000010, 0b00000100, 0b00001000, 0b00010000, 0b00100000, 0b01000000, 0b10000000};
 let const [2][16]byte adjacencyMatrix = {
     {0b00000010, 0b10000000},
     {0b00000100, 0b00000001},
@@ -35,10 +34,10 @@ main {
         let [16]byte nextHop;
         
         // add destination to encounteredSet
-        [destination/8]encounteredSet = [destination%8]masks;
+        [destination/8]encounteredSet = exp(destination%8);
 
         // while current location not encountered
-        while (([currentLocation/8]encounteredSet & [currentLocation%8]masks) == 0) {
+        while (([currentLocation/8]encounteredSet & exp(currentLocation%8)) == 0) {
 
             let [2]byte addToEncounteredSet = {0b00000000, 0b00000000};
 
@@ -46,7 +45,7 @@ main {
             let byte i = 0;
             while (i <= 15) {
                 // ignore if node is already encountered
-                if ([i/8]encounteredSet & [i%8]masks) {
+                if ([i/8]encounteredSet & exp(i%8)) {
                     i = i + 1;
                     continue;
                 };
@@ -59,10 +58,10 @@ main {
 
                 if ([0]canReach) {
                     // i can reach some node 0..=7
-                    [i]nextHop = _[0]canReach;
+                    [i]nextHop = log([0]canReach);
                 } else if ([1]canReach) {
                     // i can reach some node 8..=15
-                    [i]nextHop = _[1]canReach + 8;
+                    [i]nextHop = log([1]canReach) + 8;
                 } else {
                     // i cannot reach any currently encountered node
                     i = i + 1;
@@ -70,7 +69,7 @@ main {
                 };
 
                 // this node is now encountered
-                [i/8]addToEncounteredSet = [i/8]addToEncounteredSet | [i%8]masks;
+                [i/8]addToEncounteredSet = [i/8]addToEncounteredSet | exp(i%8);
 
                 i = i + 1;
             };

@@ -37,12 +37,12 @@
     zzzz = (
       0000 = DEC. A-1
       0001 = INC. A+1
-      0010 = LSHIFT. <A
-      0011 = RSHIFT. >A
+      0010 = LOG2 (Sets Overflow flag and outputs 0 if A=0). _A
+      0011 = EXP2. 'A
       0100 = BW NOT. ~A			
       0101 = 2'S COMP. -A
-      0110 = LOG2 (Sets Overflow flag and outputs 0 if A=0). _A
-      0111 = COMPARE (1 operand). A
+      0110 = (none)
+      0111 = COMPARE (used to get Z and N flags without performing a calculation). A
       1000 = ADD. A+B
       1001 = SUB. A-B
       1010 = MULT (does not set Overflow flag). A*B
@@ -55,7 +55,7 @@
     
     increment PC
     
-10 - branch/misc
+100 - branch
   cpu has ZCNO flags, Zero, Carry, Negative, Overflow.
   100xyyyy, where
     x = A is (0={PC+1}, 1=D0)
@@ -68,13 +68,15 @@
       0101=BNN
       0110=BO
       0111=BNO
-      then some other ones maybe...
+      1000=BGTE (branches if N==O, useful for signed inequalities)
+      1001=BNGTE (branches if N!=O)
+      ... rest unassigned
     )
     if branch taken set PC to A
     else if x set inc PC
     else set PC to PC+2
-    
-  1001---|101----- no op (for now)
+
+101 - no op (for now)
 
 11 - I/O
   11000000 - wait until enter pressed pressed

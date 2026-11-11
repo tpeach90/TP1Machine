@@ -6,7 +6,7 @@ pub struct LexError {
     pub message: String,
 }
 
-pub fn extract_tokens(source: String) -> Result<Vec<Token>, LexError> {
+pub fn extract_tokens(source: &String) -> Result<Vec<Token>, LexError> {
     let mut tokens: Vec<Token> = vec![];
 
     let mut iter = source.chars().enumerate().peekable();
@@ -147,7 +147,7 @@ pub fn extract_tokens(source: String) -> Result<Vec<Token>, LexError> {
                     }
 
                     // unambiguous 1-char tokens
-                    ';' | '[' | ']' | '(' | ')' | '{' | '}' | ',' | ':' | '+' | '-' | '~' | '*' | /*'@' |*/ '^' | '%' | '_' | '!' => {
+                    ';' | '[' | ']' | '(' | ')' | '{' | '}' | ',' | ':' | '+' | '-' | '~' | '*' | /*'@' |*/ '^' | '%' | '!' => {
                         iter.next();
                         let detail = match char {
                             ';' => TokenDetail::SemiColon, 
@@ -166,7 +166,7 @@ pub fn extract_tokens(source: String) -> Result<Vec<Token>, LexError> {
                             // '@' => TokenDetail::Operator(Operator::Arobase),
                             '^' => TokenDetail::Operator(Operator::Caret),
                             '%' => TokenDetail::Operator(Operator::Percent),
-                            '_' => TokenDetail::Operator(Operator::Underscore),
+                            // '_' => TokenDetail::Operator(Operator::Underscore),
                             '!' => TokenDetail::Operator(Operator::Exclaimation),
                             _ => panic!("unambiguous 1-char token missing from match statement")
                         };
